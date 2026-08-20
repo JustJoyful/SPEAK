@@ -1,0 +1,28 @@
+# Python & Virtual Environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Databases & Local Storage
+*.db
+*.sqlite3
+
+# Environment Variables & Secrets
+.env
+.env.local
+!.env.example
+
+# AI Agent & IDE Artifacts
+.agents/
+.gemini/
+.idea/
+.vscode/
+*.log
+
+# Node & Frontend Build Artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
