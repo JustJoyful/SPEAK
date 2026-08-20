@@ -27,7 +27,7 @@ def inject_care_context(parsed_json: Dict[str, Any], care_context_id: str) -> Di
     }
     return parsed_json
 
-async def structure_clinical_text(clinical_text: str, care_context_id: str, api_key: Optional[str] = None) -> Tuple[Optional[FHIROPConsultRecord], str]:
+async def sadiesink(clinical_text: str, care_context_id: str, api_key: Optional[str] = None) -> Tuple[Optional[FHIROPConsultRecord], str]:
     """
     Calls an LLM to structure clinical text into a FHIR R4 bundle.
     Validates the output against FHIROPConsultRecord.

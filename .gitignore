@@ -30,6 +30,7 @@ htmlcov/
 .vscode/
 *.log
 *.tmp
+medsyncplan.md
 
 # System / OS Files
 .DS_Store
