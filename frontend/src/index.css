@@ -1,0 +1,247 @@
+@import "tailwindcss";
+
+@theme {
+  /* ---- Clinical zone ---- */
+  --color-clinical: #f7f9fa;
+  --color-clinical-surface: #ffffff;
+  --color-clinical-ink: #1a2226;
+  --color-clinical-muted: #6b7b82;
+  --color-clinical-line: #dde5e8;
+  --color-teal: #1f6f6f;
+  --color-teal-soft: #e8f1f1;
+  --color-coral: #d9633b;
+
+  /* ---- Security zone ---- */
+  --color-vault: #0b0e11;
+  --color-vault-raised: #12171c;
+  --color-vault-line: #1e262d;
+  --color-vault-ink: #c9d1d3;
+  --color-vault-dim: #6d7a80;
+
+  /* ---- Status thread ---- */
+  --color-running: #e8a33d;
+  --color-verified: #2fd9c4;
+  --color-rejected: #e5484d;
+
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --radius: 0.375rem;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-clinical-line);
+  }
+  html {
+    background-color: var(--color-clinical);
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background-color: var(--color-clinical);
+    color: var(--color-clinical-ink);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01";
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background-color: color-mix(in srgb, var(--color-teal) 22%, transparent);
+  }
+}
+
+/* Numeric metadata: tabular so timestamps never jitter */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* ============ Motion ============ */
+
+@keyframes lineIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+.animate-line-in {
+  animation: lineIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes wordIn {
+  from {
+    opacity: 0;
+    transform: translateY(0.14em);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-word-in {
+  animation: wordIn 0.22s ease-out both;
+}
+
+@keyframes haloPulse {
+  0% {
+    box-shadow:
+      0 0 0 0 color-mix(in srgb, var(--color-coral) 45%, transparent),
+      0 0 0 0 color-mix(in srgb, var(--color-coral) 25%, transparent);
+  }
+  70% {
+    box-shadow:
+      0 0 0 18px color-mix(in srgb, var(--color-coral) 0%, transparent),
+      0 0 0 34px color-mix(in srgb, var(--color-coral) 0%, transparent);
+  }
+  100% {
+    box-shadow:
+      0 0 0 0 color-mix(in srgb, var(--color-coral) 0%, transparent),
+      0 0 0 0 color-mix(in srgb, var(--color-coral) 0%, transparent);
+  }
+}
+.animate-halo {
+  animation: haloPulse 1.9s ease-out infinite;
+}
+
+@keyframes seamFlow {
+  0% {
+    background-position: 0 -240px;
+  }
+  100% {
+    background-position: 0 240px;
+  }
+}
+.seam-flow {
+  background-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    color-mix(in srgb, var(--color-verified) 0%, transparent) 30%,
+    color-mix(in srgb, var(--color-verified) 85%, transparent) 50%,
+    color-mix(in srgb, var(--color-verified) 0%, transparent) 70%,
+    transparent 100%
+  );
+  background-size: 100% 240px;
+  background-repeat: repeat-y;
+  animation: seamFlow 2.4s linear infinite;
+}
+
+@keyframes redact {
+  0% {
+    background-size: 0% 100%;
+    opacity: 1;
+  }
+  60% {
+    background-size: 100% 100%;
+    opacity: 1;
+  }
+  100% {
+    background-size: 100% 100%;
+    opacity: 1;
+  }
+}
+.animate-redact {
+  background-image: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--color-rejected) 26%, transparent),
+    color-mix(in srgb, var(--color-rejected) 26%, transparent)
+  );
+  background-repeat: no-repeat;
+  animation: redact 0.5s cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+
+@keyframes tickPop {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.18);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.animate-tick {
+  animation: tickPop 0.34s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(220%);
+  }
+}
+.animate-sweep {
+  animation: sweep 1.5s ease-in-out infinite;
+}
+
+@keyframes caretBlink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.animate-caret {
+  animation: caretBlink 1s steps(1) infinite;
+}
+
+@keyframes barLive {
+  0%,
+  100% {
+    transform: scaleY(0.25);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes glowBreath {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+.animate-breath {
+  animation: glowBreath 2.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Vault scrollbar */
+.vault-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.vault-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.vault-scroll::-webkit-scrollbar-thumb {
+  background: #253038;
+  border-radius: 3px;
+}
+.vault-scroll::-webkit-scrollbar-thumb:hover {
+  background: #33414b;
+}

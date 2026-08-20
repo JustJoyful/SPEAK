@@ -1,18 +1,26 @@
 # Python & Virtual Environments
 .venv/
 venv/
+ENV/
+env/
 __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
 
 # Databases & Local Storage
 *.db
+*.db-journal
 *.sqlite3
 
 # Environment Variables & Secrets
 .env
 .env.local
+.env.*.local
 !.env.example
 
 # AI Agent & IDE Artifacts
@@ -21,6 +29,11 @@ __pycache__/
 .idea/
 .vscode/
 *.log
+*.tmp
+
+# System / OS Files
+.DS_Store
+Thumbs.db
 
 # Node & Frontend Build Artifacts
 frontend/node_modules/
