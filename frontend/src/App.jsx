@@ -82,19 +82,23 @@ export default function App() {
     return medSyncApi.getQueue()
       .then((payload) => {
         const rows = Array.isArray(payload) ? payload : payload.queue ?? []
-        const next = rows.map((row) => {
-          const token = row.token_number ?? row.token
-          const demo = CASES.find((c) => c.token === token) ?? CASES[0]
-          return {
-            ...demo,
-            ...row,
-            token,
-            name: row.patient_display_name ?? row.name ?? demo.name,
-            status: row.status ?? demo.status,
-            script: demo.script,
-            marks: demo.marks,
-          }
-        })
+        const next = rows
+          .map((row) => {
+            const rawToken = row.token_number ?? row.token
+            const token = typeof rawToken === "number" ? rawToken : Number.parseInt(rawToken, 10)
+            if (!Number.isFinite(token)) return null
+            const demo = CASES.find((c) => c.token === token) ?? CASES[0]
+            return {
+              ...demo,
+              ...row,
+              token,
+              name: row.patient_display_name ?? row.name ?? demo.name,
+              status: row.status ?? demo.status,
+              script: demo.script,
+              marks: demo.marks,
+            }
+          })
+          .filter(Boolean)
         if (next.length) {
           setRemoteCases(next)
           setActiveToken((token) => next.some((item) => item.token === token) ? token : next[0].token)
