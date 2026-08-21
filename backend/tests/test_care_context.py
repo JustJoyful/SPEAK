@@ -32,6 +32,7 @@ def test_generate_care_context_id():
 def test_bidirectional_mapping_integrity(test_db_path):
     raw_abha_id = "91-9999-8888-7777"
     clinic_id = "CLINIC-TEST-01"
+    os.environ["ABDM_SALT"] = "test-salt"
     
     # Store
     stored = create_and_store_care_context(raw_abha_id, clinic_id, db_path=test_db_path)

@@ -183,18 +183,18 @@ frontend/
 
 ---
 
-### ⏳ Phase 6: Pipeline Integration, Passive Checklist & FastAPI Endpoints
-- [ ] **`backend/pipeline/checklist.py`**:
+### ✅ Phase 6: Pipeline Integration, Passive Checklist & FastAPI Endpoints
+- [x] **`backend/pipeline/checklist.py`**:
   - Debounced partial-transcript extractor using fast LLM tier to return boolean `ChecklistState`.
-- [ ] **`backend/events/bus.py`**:
+- [x] **`backend/events/bus.py`**:
   - SSE event broadcaster supporting stages: `transcript`, `pii_masked`, `checklist_update`, `fhir_structured`, `pydantic_verified`, `encrypted`, `persisted`, `synced`, `error`.
-- [ ] **`backend/routes/encounter.py`**:
+- [x] **`backend/routes/encounter.py`**:
   - `POST /encounter/select-token`: Binds session to selected patient token.
   - `POST /encounter/text`: Processes typed or audio-transcribed text through the complete pipeline.
   - `POST /encounter/finish`: Triggers final FHIR generation, Pydantic validation gate, AES encryption, and queue status update to `done`.
-- [ ] **`backend/pipeline/stt.py`**:
+- [x] **`backend/pipeline/stt.py`**:
   - Cumulative faster-whisper transcription wrapper.
-- [ ] **`backend/main.py`**:
+- [x] **`backend/main.py`**:
   - FastAPI application wiring routes, CORS, and lifecycle events.
 - **Verification:** End-to-end `curl` testing from queue selection to encrypted storage.
 
