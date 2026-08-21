@@ -12,7 +12,7 @@ const LEVEL = {
 }
 
 const PHASE_LABEL = {
-  idle: "standby",
+  idle: "monitoring",
   listening: "capturing",
   received: "ingest",
   scanning: "pii scan",
