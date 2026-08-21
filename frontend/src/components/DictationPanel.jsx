@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react"
-import { Mic, Square, Check, RotateCcw, Loader2 } from "lucide-react"
+import { Mic, Square, Check, RotateCcw, Loader2, Pencil } from "lucide-react"
 import { cn, clock } from "@/lib/utils"
 
 const BAR_COUNT = 28
@@ -7,6 +7,7 @@ const BAR_COUNT = 28
 export function DictationPanel({
   active,
   words,
+  rawTranscript,
   recording,
   finished,
   processing,
@@ -14,6 +15,7 @@ export function DictationPanel({
   onToggle,
   onFinish,
   onReset,
+  onTranscriptEdit,
 }) {
   const scrollRef = useRef(null)
   const hasText = words.length > 0
@@ -158,9 +160,18 @@ export function DictationPanel({
       {/* transcript */}
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex items-center justify-between gap-3 px-6 pb-2 pt-4 lg:px-8">
-          <h3 className="text-[0.66rem] font-semibold uppercase tracking-[0.1em] text-clinical-muted">
-            Live transcript
-          </h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-[0.66rem] font-semibold uppercase tracking-[0.1em] text-clinical-muted">
+              Live transcript
+            </h3>
+            {/* editable badge — shown when the user can type */}
+            {hasText && !recording && !finished && !processing && (
+              <span className="flex items-center gap-1 rounded-full border border-teal/25 bg-teal-soft px-2 py-[2px] text-[0.58rem] font-medium text-teal">
+                <Pencil className="h-2.5 w-2.5" aria-hidden="true" />
+                editable
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-2.5">
             <span className="tnum text-[0.68rem] text-clinical-muted">{wordCount} words</span>
             <span aria-hidden="true" className="h-3 w-px bg-clinical-line" />
@@ -170,28 +181,48 @@ export function DictationPanel({
 
         <div
           ref={scrollRef}
-          className="vault-scroll min-h-0 flex-1 overflow-y-auto px-6 pb-6 lg:px-8"
-          aria-live="polite"
-          aria-atomic="false"
+          className="vault-scroll min-h-0 flex-1 overflow-y-auto px-6 pb-4 lg:px-8"
         >
-          {hasText ? (
-            <p className="max-w-[62ch] text-[1.02rem] leading-relaxed tracking-[-0.005em] text-clinical-ink">
+          {/* ---- RECORDING: animated word-by-word (read-only) ---- */}
+          {recording ? (
+            <p
+              className="max-w-[62ch] text-[1.02rem] leading-relaxed tracking-[-0.005em] text-clinical-ink"
+              aria-live="polite"
+              aria-atomic="false"
+            >
               {words.map((w, i) => (
                 <span
                   key={i}
-                  className={cn("animate-word-in", i >= words.length - 3 && recording && "text-clinical-ink")}
+                  className={cn("animate-word-in", i >= words.length - 3 && "text-clinical-ink")}
                 >
                   {w}{" "}
                 </span>
               ))}
-              {recording && (
-                <span
-                  aria-hidden="true"
-                  className="animate-caret ml-[1px] inline-block h-[1.05em] w-[2px] translate-y-[2px] bg-coral"
-                />
-              )}
+              <span
+                aria-hidden="true"
+                className="animate-caret ml-[1px] inline-block h-[1.05em] w-[2px] translate-y-[2px] bg-coral"
+              />
             </p>
+          ) : hasText ? (
+            /* ---- PAUSED / DONE: fully editable textarea ---- */
+            <textarea
+              id="transcript-editor"
+              aria-label="Transcript — click to edit"
+              value={rawTranscript}
+              onChange={(e) => onTranscriptEdit(e.target.value)}
+              readOnly={finished || processing}
+              spellCheck={true}
+              className={cn(
+                "w-full max-w-[62ch] resize-none bg-transparent text-[1.02rem] leading-relaxed tracking-[-0.005em] text-clinical-ink outline-none transition-all duration-200",
+                "min-h-[120px] pb-2",
+                finished || processing
+                  ? "cursor-default select-text"
+                  : "cursor-text rounded-md border border-transparent focus:border-teal/30 focus:bg-teal-soft/30 focus:px-2 focus:py-1",
+              )}
+              style={{ fieldSizing: "content" }}
+            />
           ) : (
+            /* ---- EMPTY: placeholder ---- */
             <div className="flex h-full min-h-[120px] items-center">
               <p className="max-w-[46ch] text-[0.95rem] leading-relaxed text-clinical-muted">
                 Your words appear here as you speak. Dictate the history, findings, impression and advice in one
