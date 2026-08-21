@@ -28,7 +28,6 @@ export function usePipelineStream({ enabled = true, onEvent } = {}) {
 
     return () => {
       source.close()
-      setConnection("disabled")
     }
   }, [enabled])
 
