@@ -15,6 +15,7 @@ export default function App() {
     Object.fromEntries(CASES.map((c) => [c.token, c.status])),
   )
   const [activeToken, setActiveToken] = useState(CASES[0].token)
+  const [rawTranscript, setRawTranscript] = useState("")
   const [words, setWords] = useState([])
   const [recording, setRecording] = useState(false)
   const [processing, setProcessing] = useState(false)
@@ -61,6 +62,7 @@ export default function App() {
       setProcessing(false)
       setFinished(false)
       setWords([])
+      setRawTranscript("")
       setElapsed(0)
       setChecks(EMPTY_CHECKS)
       setRedactCount(0)
@@ -90,7 +92,6 @@ export default function App() {
     [activeToken, resetCase],
   )
 
-  /* ---- dictation streaming ---- */
   const scriptWords = useMemo(() => active.script.split(/\s+/), [active.script])
 
   useEffect(() => {
@@ -106,7 +107,9 @@ export default function App() {
           return prev
         }
         const burst = 1 + Math.floor(rng() * 3)
-        return scriptWords.slice(0, Math.min(scriptWords.length, prev.length + burst))
+        const next = scriptWords.slice(0, Math.min(scriptWords.length, prev.length + burst))
+        setRawTranscript(next.join(" "))
+        return next
       })
       const gap = 100 + rng() * 190
       timers.current.push(window.setTimeout(tick, gap))
@@ -117,14 +120,12 @@ export default function App() {
     }
   }, [recording, scriptWords, active.token])
 
-  /* elapsed clock */
   useEffect(() => {
     if (!recording) return
     const id = window.setInterval(() => setElapsed((e) => e + 100), 100)
     return () => window.clearInterval(id)
   }, [recording])
 
-  /* live capture chatter + checklist filling */
   const lastMark = useRef({
     symptoms: false,
     diagnosis: false,
@@ -183,6 +184,11 @@ export default function App() {
     })
   }, [recording, activeToken, pushLog])
 
+  const handleTranscriptEdit = useCallback((text) => {
+    setRawTranscript(text)
+    setWords(text.trim() ? text.trim().split(/\s+/) : [])
+  }, [])
+
   const handleFinish = useCallback(() => {
     if (!words.length || processing || finished) return
     setProcessing(true)
@@ -222,7 +228,6 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen flex-col bg-clinical lg:h-screen lg:overflow-hidden">
-      {/* top bar */}
       <header className="flex shrink-0 items-center justify-between gap-4 border-b border-clinical-line bg-clinical-surface px-5 py-3 lg:px-6">
         <div className="flex items-center gap-3">
           <span className="flex h-8 w-8 items-center justify-center rounded-md bg-teal text-clinical-surface">
@@ -246,13 +251,13 @@ export default function App() {
         </div>
       </header>
 
-      {/* three zones */}
       <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[248px_minmax(0,1fr)_13px_360px] xl:grid-cols-[272px_minmax(0,1fr)_13px_396px]">
         <QueueRail cases={cases} activeToken={activeToken} onSelect={handleSelect} doneCount={doneCount} />
 
         <DictationPanel
           active={active}
           words={words}
+          rawTranscript={rawTranscript}
           recording={recording}
           finished={finished}
           processing={processing}
@@ -260,9 +265,9 @@ export default function App() {
           onToggle={handleToggle}
           onFinish={handleFinish}
           onReset={() => resetCase(activeToken)}
+          onTranscriptEdit={handleTranscriptEdit}
         />
 
-        {/* THE SEAM — the trust boundary, made literal */}
         <div
           className="relative hidden overflow-hidden bg-vault lg:block"
           role="separator"
@@ -286,7 +291,6 @@ export default function App() {
           </span>
         </div>
 
-        {/* security zone */}
         <aside className="flex min-h-0 flex-col border-t border-vault-line bg-vault text-vault-ink lg:border-t-0">
           <XrayLog
             lines={logs}
