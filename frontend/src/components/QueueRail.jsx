@@ -38,7 +38,7 @@ export function QueueRail({ cases, activeToken, onSelect, doneCount, selectionBu
       <ul className="vault-scroll min-h-0 flex-1 overflow-y-auto px-2.5 py-3">
         {cases.map((c) => {
           const active = c.token === activeToken
-          const st = STATUS_STYLE[c.status]
+          const st = STATUS_STYLE[c.status] ?? STATUS_STYLE.waiting
           return (
             <li key={c.token}>
               <button

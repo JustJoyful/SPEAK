@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { Check, Code2, X } from "lucide-react"
 
-export function RecordViewer({ record, onClose }) {
+export function RecordViewer({ record, onClose, isBackend = false }) {
   const [showJson, setShowJson] = useState(false)
   const clinical = normalizeClinicalRecord(record)
   const symptoms = clinical.symptoms ?? clinical.presentingComplaint ?? []
@@ -23,14 +23,14 @@ export function RecordViewer({ record, onClose }) {
             <h2 id="record-viewer-title" className="mt-1 text-lg font-semibold text-clinical-ink">Structured clinical record</h2>
           </div>
           <button type="button" onClick={onClose} className="rounded-md p-2 text-clinical-muted hover:bg-clinical" aria-label="Close record viewer">
-            <X className="h-4 w-4" />
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </header>
 
         <div className="max-h-[calc(88vh-76px)] overflow-y-auto p-5">
           <div className="mb-5 flex items-center gap-2 rounded-md border border-teal/25 bg-teal-soft px-3 py-2 text-sm text-teal">
-            <Check className="h-4 w-4" />
-            NRCeS validation and encrypted persistence completed
+            <Check className="h-4 w-4" aria-hidden="true" />
+            {isBackend ? "NRCeS validation and encrypted persistence completed" : "Structured record ready for review"}
           </div>
 
           {!showJson && (
@@ -49,7 +49,7 @@ export function RecordViewer({ record, onClose }) {
           )}
 
           <button type="button" onClick={() => setShowJson((value) => !value)} className="mt-5 inline-flex items-center gap-2 rounded-md border border-clinical-line px-3 py-2 text-xs font-medium text-clinical-muted hover:bg-clinical">
-            <Code2 className="h-3.5 w-3.5" />
+            <Code2 className="h-3.5 w-3.5" aria-hidden="true" />
             {showJson ? "Show clinical summary" : "Inspect raw JSON"}
           </button>
         </div>

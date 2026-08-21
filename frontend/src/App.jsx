@@ -83,7 +83,8 @@ export default function App() {
       .then((payload) => {
         const rows = Array.isArray(payload) ? payload : payload.queue ?? []
         const next = rows.map((row) => {
-          const token = row.token_number ?? row.token
+          const token = Number(row.token_number ?? row.token)
+          if (!Number.isFinite(token) || token <= 0) return null
           const demo = CASES.find((c) => c.token === token) ?? CASES[0]
           return {
             ...demo,
@@ -94,7 +95,7 @@ export default function App() {
             script: demo.script,
             marks: demo.marks,
           }
-        })
+        }).filter(Boolean)
         if (next.length) {
           setRemoteCases(next)
           setActiveToken((token) => next.some((item) => item.token === token) ? token : next[0].token)
@@ -180,10 +181,11 @@ export default function App() {
         try {
           await medSyncApi.selectToken(token)
         } catch (error) {
+          const message = readableError(error, "Token selection failed")
           pushLog({
             stage: "NETWORK",
             level: "warn",
-            spans: [{ t: "text", v: `Token selection failed · ${error.message}` }],
+            spans: [{ t: "text", v: `Token selection failed · ${message}` }],
           })
         }
       }
@@ -447,7 +449,7 @@ export default function App() {
           <ChecklistPanel active={active} state={checks} />
         </aside>
       </main>
-      {finished && record && <RecordViewer record={record} onClose={() => setRecord(null)} />}
+      {finished && record && <RecordViewer record={record} isBackend={backendConfigured} onClose={() => setRecord(null)} />}
     </div>
   )
 }
