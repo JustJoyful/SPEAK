@@ -30,7 +30,7 @@ export function RecordViewer({ record, onClose }) {
         <div className="max-h-[calc(88vh-76px)] overflow-y-auto p-5">
           <div className="mb-5 flex items-center gap-2 rounded-md border border-teal/25 bg-teal-soft px-3 py-2 text-sm text-teal">
             <Check className="h-4 w-4" />
-            NRCeS validation and encrypted persistence completed
+            Structured record ready for review
           </div>
 
           {!showJson && (
