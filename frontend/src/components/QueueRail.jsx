@@ -18,7 +18,7 @@ const STATUS_STYLE = {
   },
 }
 
-export function QueueRail({ cases, activeToken, onSelect, doneCount }) {
+export function QueueRail({ cases, activeToken, onSelect, doneCount, selectionBusy }) {
   return (
     <aside className="flex min-h-0 flex-col border-clinical-line lg:border-r bg-clinical">
       <header className="flex items-baseline justify-between gap-3 border-b border-clinical-line px-5 pb-4 pt-5">
@@ -44,9 +44,10 @@ export function QueueRail({ cases, activeToken, onSelect, doneCount }) {
               <button
                 type="button"
                 onClick={() => onSelect(c.token)}
+                disabled={selectionBusy != null}
                 aria-current={active ? "true" : undefined}
                 className={cn(
-                  "group relative mb-1 flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-all duration-200",
+                  "group relative mb-1 flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-all duration-200 disabled:cursor-wait disabled:opacity-70",
                   active
                     ? "bg-clinical-surface shadow-[0_1px_2px_rgba(26,34,38,0.06),0_6px_16px_-8px_rgba(31,111,111,0.28)]"
                     : "hover:bg-clinical-surface/70",

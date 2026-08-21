@@ -15,6 +15,10 @@ const EMPTY_CHECKS = { symptoms: "empty", diagnosis: "empty", medication: "empty
 
 export default function App() {
   const [remoteCases, setRemoteCases] = useState(null)
+  const [queueLoading, setQueueLoading] = useState(backendConfigured)
+  const [queueError, setQueueError] = useState("")
+  const [finishError, setFinishError] = useState("")
+  const [selectionBusy, setSelectionBusy] = useState(null)
   const [statuses, setStatuses] = useState(() =>
     Object.fromEntries(CASES.map((c) => [c.token, c.status])),
   )
@@ -62,10 +66,12 @@ export default function App() {
     setLogs((prev) => [...prev.slice(-90), { ...l, id: `l${seq.current}`, at: Date.now() }])
   }, [])
 
-  useEffect(() => {
-    if (!backendConfigured) return undefined
+  const loadQueue = useCallback(() => {
+    if (!backendConfigured) return Promise.resolve()
+    setQueueLoading(true)
+    setQueueError("")
     let cancelled = false
-    medSyncApi.getQueue()
+    return medSyncApi.getQueue()
       .then((payload) => {
         if (cancelled) return
         const rows = Array.isArray(payload) ? payload : payload.queue ?? []
@@ -88,13 +94,24 @@ export default function App() {
           setStatuses(Object.fromEntries(next.map((item) => [item.token, item.status])))
         }
       })
-      .catch((error) => pushLog({
-        stage: "NETWORK",
-        level: "warn",
-        spans: [{ t: "text", v: `Backend queue unavailable · ${error.message} · local demo retained` }],
-      }))
-    return () => { cancelled = true }
+      .catch((error) => {
+        if (cancelled) return
+        setQueueError(error.message)
+        pushLog({
+          stage: "NETWORK",
+          level: "warn",
+          spans: [{ t: "text", v: `Backend queue unavailable · ${error.message} · local demo retained` }],
+        })
+      })
+      .finally(() => {
+        if (!cancelled) setQueueLoading(false)
+      })
   }, [pushLog])
+
+  useEffect(() => {
+    loadQueue()
+    return undefined
+  }, [loadQueue])
 
   const handlePipelineEvent = useCallback((event) => {
     const stage = event.stage || event.type || "PIPELINE"
@@ -151,6 +168,7 @@ export default function App() {
   const handleSelect = useCallback(
     async (token) => {
       if (token === activeToken) return
+      setSelectionBusy(token)
       if (backendConfigured) {
         try {
           await medSyncApi.selectToken(token)
@@ -164,6 +182,7 @@ export default function App() {
       }
       setActiveToken(token)
       resetCase(token)
+      setSelectionBusy(null)
     },
     [activeToken, pushLog, resetCase],
   )
@@ -267,6 +286,7 @@ export default function App() {
 
   const handleFinish = useCallback(async () => {
     if (!words.length || processing || finished) return
+    setFinishError("")
     setProcessing(true)
     setSeam(true)
     const transcript = words.join(" ")
@@ -285,6 +305,7 @@ export default function App() {
         setProcessing(false)
         setSeam(false)
         setPhase("error")
+        setFinishError(error.message)
         pushLog({
           stage: "ERROR",
           level: "error",
@@ -352,8 +373,23 @@ export default function App() {
         </div>
       </header>
 
+      {backendConfigured && (queueLoading || queueError || finishError) && (
+        <div className="flex items-center justify-between gap-3 border-b border-clinical-line bg-clinical-surface px-5 py-2 text-xs lg:px-6">
+          <span className={queueError || finishError ? "text-rejected" : "text-clinical-muted"}>
+            {queueLoading && "Loading live queue…"}
+            {!queueLoading && queueError && `Live queue unavailable · ${queueError}`}
+            {!queueLoading && !queueError && finishError && `Consultation failed · ${finishError}`}
+          </span>
+          {queueError && (
+            <button type="button" onClick={loadQueue} className="rounded border border-clinical-line px-2 py-1 font-medium text-clinical-muted hover:bg-clinical">
+              Retry queue
+            </button>
+          )}
+        </div>
+      )}
+
       <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[248px_minmax(0,1fr)_13px_360px] xl:grid-cols-[272px_minmax(0,1fr)_13px_396px]">
-        <QueueRail cases={cases} activeToken={activeToken} onSelect={handleSelect} doneCount={doneCount} />
+        <QueueRail cases={cases} activeToken={activeToken} onSelect={handleSelect} doneCount={doneCount} selectionBusy={selectionBusy} />
 
         <DictationPanel
           active={active}
