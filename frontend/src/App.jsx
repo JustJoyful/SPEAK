@@ -4,13 +4,30 @@ import { QueueRail } from "@/components/QueueRail"
 import { DictationPanel } from "@/components/DictationPanel"
 import { XrayLog } from "@/components/XrayLog"
 import { ChecklistPanel } from "@/components/ChecklistPanel"
+import { RecordViewer } from "@/components/RecordViewer"
 import { cn } from "@/lib/utils"
 import { CASES, CHECKLIST_ORDER } from "@/lib/cases"
 import { buildPipeline, idleLines, makeRng } from "@/lib/pipeline"
+import { backendConfigured, medSyncApi } from "@/api/client"
+import { usePipelineStream } from "@/hooks/usePipelineStream"
 
 const EMPTY_CHECKS = { symptoms: "empty", diagnosis: "empty", medication: "empty", advice: "empty" }
 
+function readableError(error, fallback = "Unknown error") {
+  if (error instanceof Error && error.message) return error.message
+  if (typeof error === "string" && error.trim()) return error
+  if (error && typeof error === "object" && typeof error.message === "string" && error.message.trim()) {
+    return error.message
+  }
+  return fallback
+}
+
 export default function App() {
+  const [remoteCases, setRemoteCases] = useState(null)
+  const [queueLoading, setQueueLoading] = useState(backendConfigured)
+  const [queueError, setQueueError] = useState("")
+  const [finishError, setFinishError] = useState("")
+  const [selectionBusy, setSelectionBusy] = useState(null)
   const [statuses, setStatuses] = useState(() =>
     Object.fromEntries(CASES.map((c) => [c.token, c.status])),
   )
@@ -27,17 +44,20 @@ export default function App() {
   const [redactCount, setRedactCount] = useState(0)
   const [egressClean, setEgressClean] = useState(false)
   const [seam, setSeam] = useState(false)
+  const [record, setRecord] = useState(null)
 
   const timers = useRef([])
   const seq = useRef(0)
 
-  const active = useMemo(
-    () => CASES.find((c) => c.token === activeToken) ?? CASES[0],
-    [activeToken],
-  )
   const cases = useMemo(
-    () => CASES.map((c) => ({ ...c, status: statuses[c.token] ?? c.status })),
-    [statuses],
+    () => remoteCases
+      ? remoteCases.map((c) => ({ ...c, status: statuses[c.token] ?? c.status }))
+      : CASES.map((c) => ({ ...c, status: statuses[c.token] ?? c.status })),
+    [remoteCases, statuses],
+  )
+  const active = useMemo(
+    () => cases.find((c) => c.token === activeToken) ?? cases[0] ?? CASES[0],
+    [activeToken, cases],
   )
 
   const clearTimers = useCallback(() => {
@@ -55,6 +75,75 @@ export default function App() {
     setLogs((prev) => [...prev.slice(-90), { ...l, id: `l${seq.current}`, at: Date.now() }])
   }, [])
 
+  const loadQueue = useCallback(() => {
+    if (!backendConfigured) return Promise.resolve()
+    setQueueLoading(true)
+    setQueueError("")
+    return medSyncApi.getQueue()
+      .then((payload) => {
+        const rows = Array.isArray(payload) ? payload : payload.queue ?? []
+        const next = rows.map((row) => {
+          const token = Number(row.token_number ?? row.token)
+          if (!Number.isFinite(token) || token <= 0) return null
+          const demo = CASES.find((c) => c.token === token) ?? CASES[0]
+          return {
+            ...demo,
+            ...row,
+            token,
+            name: row.patient_display_name ?? row.name ?? demo.name,
+            status: row.status ?? demo.status,
+            script: demo.script,
+            marks: demo.marks,
+          }
+        }).filter(Boolean)
+        if (next.length) {
+          setRemoteCases(next)
+          setActiveToken((token) => next.some((item) => item.token === token) ? token : next[0].token)
+          setStatuses(Object.fromEntries(next.map((item) => [item.token, item.status])))
+        }
+      })
+      .catch((error) => {
+        const message = readableError(error, "Unable to load queue")
+        setQueueError(message)
+        pushLog({
+          stage: "NETWORK",
+          level: "warn",
+          spans: [{ t: "text", v: `Backend queue unavailable · ${message} · local demo retained` }],
+        })
+      })
+      .finally(() => {
+        setQueueLoading(false)
+      })
+  }, [pushLog])
+
+  useEffect(() => {
+    loadQueue()
+    return undefined
+  }, [loadQueue])
+
+  const handlePipelineEvent = useCallback((event) => {
+    const stage = event.stage || event.type || "PIPELINE"
+    const message = event.message || event.detail || event.data
+    if (event.phase) setPhase(event.phase)
+    if (event.stage === "PII" && (event.level === "redact" || event.redacted)) {
+      setRedactCount((count) => count + 1)
+    }
+    if (event.egress_clean || event.stage === "MODEL" && event.level === "info") setEgressClean(true)
+    if (event.checklist) {
+      setChecks((current) => ({ ...current, ...event.checklist }))
+    }
+    pushLog({
+      stage,
+      level: event.level || "info",
+      spans: event.spans || [{ t: "text", v: message || "Pipeline event received" }],
+      metric: event.metric,
+      progress: event.progress,
+      depth: event.depth,
+    })
+  }, [pushLog])
+
+  usePipelineStream({ enabled: backendConfigured, onEvent: handlePipelineEvent })
+
   const resetCase = useCallback(
     (token) => {
       clearTimers()
@@ -69,6 +158,7 @@ export default function App() {
       setEgressClean(false)
       setPhase("idle")
       setSeam(false)
+      setRecord(null)
       setLogs([
         ...idleLines(),
         {
@@ -84,12 +174,26 @@ export default function App() {
   )
 
   const handleSelect = useCallback(
-    (token) => {
+    async (token) => {
       if (token === activeToken) return
+      setSelectionBusy(token)
+      if (backendConfigured) {
+        try {
+          await medSyncApi.selectToken(token)
+        } catch (error) {
+          const message = readableError(error, "Token selection failed")
+          pushLog({
+            stage: "NETWORK",
+            level: "warn",
+            spans: [{ t: "text", v: `Token selection failed · ${message}` }],
+          })
+        }
+      }
       setActiveToken(token)
       resetCase(token)
+      setSelectionBusy(null)
     },
-    [activeToken, resetCase],
+    [activeToken, pushLog, resetCase],
   )
 
   const scriptWords = useMemo(() => active.script.split(/\s+/), [active.script])
@@ -212,11 +316,38 @@ export default function App() {
     setWords(text.trim() ? text.trim().split(/\s+/) : [])
   }, [])
 
-  const handleFinish = useCallback(() => {
+  const handleFinish = useCallback(async () => {
     if (!words.length || processing || finished) return
+    setFinishError("")
     setProcessing(true)
     setSeam(true)
     const transcript = words.join(" ")
+
+    if (backendConfigured) {
+      try {
+        const result = await medSyncApi.finishEncounter({ text: transcript, language: "en-IN" })
+        setRecord(result?.record ?? result)
+        setProcessing(false)
+        setFinished(true)
+        setSeam(false)
+        setPhase("persisted")
+        setChecks({ symptoms: "checked", diagnosis: "checked", medication: "checked", advice: "checked" })
+        setStatuses((s) => ({ ...s, [activeToken]: "done" }))
+      } catch (error) {
+        const message = readableError(error, "Unable to finish consultation")
+        setProcessing(false)
+        setSeam(false)
+        setPhase("error")
+        setFinishError(message)
+        pushLog({
+          stage: "ERROR",
+          level: "error",
+          spans: [{ t: "text", v: `Consultation failed · ${message}` }],
+        })
+      }
+      return
+    }
+
     const steps = buildPipeline(active, transcript, active.token * 104729)
 
     let t = 0
@@ -242,6 +373,7 @@ export default function App() {
       setFinished(true)
       setSeam(false)
       setChecks({ symptoms: "checked", diagnosis: "checked", medication: "checked", advice: "checked" })
+      setRecord({ token: activeToken, fhir: active.fhir })
       setStatuses((s) => ({ ...s, [activeToken]: "done" }))
     }, t + 320)
   }, [words, processing, finished, active, activeToken, later, pushLog])
@@ -274,8 +406,23 @@ export default function App() {
         </div>
       </header>
 
+      {backendConfigured && (queueLoading || queueError || finishError) && (
+        <div className="flex items-center justify-between gap-3 border-b border-clinical-line bg-clinical-surface px-5 py-2 text-xs lg:px-6">
+          <span className={queueError || finishError ? "text-rejected" : "text-clinical-muted"}>
+            {queueLoading && "Loading live queue…"}
+            {!queueLoading && queueError && `Live queue unavailable · ${queueError}`}
+            {!queueLoading && !queueError && finishError && `Consultation failed · ${finishError}`}
+          </span>
+          {queueError && (
+            <button type="button" onClick={loadQueue} className="rounded border border-clinical-line px-2 py-1 font-medium text-clinical-muted hover:bg-clinical">
+              Retry queue
+            </button>
+          )}
+        </div>
+      )}
+
       <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[248px_minmax(0,1fr)_13px_360px] xl:grid-cols-[272px_minmax(0,1fr)_13px_396px]">
-        <QueueRail cases={cases} activeToken={activeToken} onSelect={handleSelect} doneCount={doneCount} />
+        <QueueRail cases={cases} activeToken={activeToken} onSelect={handleSelect} doneCount={doneCount} selectionBusy={selectionBusy} />
 
         <DictationPanel
           active={active}
@@ -325,6 +472,7 @@ export default function App() {
           <ChecklistPanel active={active} state={checks} />
         </aside>
       </main>
+      {finished && record && <RecordViewer record={record} isBackend={backendConfigured} onClose={() => setRecord(null)} />}
     </div>
   )
 }
