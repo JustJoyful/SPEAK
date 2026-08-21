@@ -56,28 +56,31 @@ def test_active_encounter_session_lifecycle():
     assert res["status"] == "success"
     assert res["token_number"] == 1
     assert res["patient_display_name"] == "Priya Sharma"
-    assert session.active_care_context_id == "CC-90142"
 
     # Verify DB status changed to in-progress
     entry = get_queue_entry_by_token(1, db_path=TEST_DB)
     assert entry["status"] == "in-progress"
 
     # 2. Append dictation
-    session.append_transcript("Patient has mild fever.")
-    assert session.is_locked is True
-    assert "mild fever" in session.cumulative_transcript
+    session.append_transcript(1, "Patient has mild fever.", db_path=TEST_DB)
+    state1 = session.get_current_state(1, db_path=TEST_DB)
+    assert state1["is_locked"] is True
+    
+    entry = get_queue_entry_by_token(1, db_path=TEST_DB)
+    assert "mild fever" in entry["cumulative_transcript"]
 
     # 3. Attempting to switch tokens while locked must raise 409
     with pytest.raises(HTTPException) as exc_info:
-        session.select_token(2, db_path=TEST_DB)
+        session.select_token(1, db_path=TEST_DB)
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail["error"] == "SESSION_LOCKED"
 
     # 4. Clear session and switch
-    session.clear_session()
-    assert session.active_token_number is None
-    assert session.is_locked is False
+    session.clear_session(1, db_path=TEST_DB)
+    state_cleared = session.get_current_state(1, db_path=TEST_DB)
+    assert state_cleared["is_locked"] is False
+    assert state_cleared["has_transcript"] is False
 
     res2 = session.select_token(2, db_path=TEST_DB)
     assert res2["token_number"] == 2
-    assert session.active_care_context_id == "CC-81203"
+

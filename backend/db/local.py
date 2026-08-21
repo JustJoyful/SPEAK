@@ -26,6 +26,8 @@ def init_db(db_path: Optional[str] = None) -> None:
         patient_display_name TEXT NOT NULL,
         abha_hash TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'waiting', -- waiting | in-progress | done
+        is_locked INTEGER NOT NULL DEFAULT 0,
+        cumulative_transcript TEXT NOT NULL DEFAULT '',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """)
@@ -104,8 +106,8 @@ def enqueue_patient(
     cursor = conn.cursor()
     cursor.execute(
         """
-        INSERT INTO queue (token_number, care_context_id, patient_display_name, abha_hash, status)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO queue (token_number, care_context_id, patient_display_name, abha_hash, status, is_locked, cumulative_transcript)
+        VALUES (?, ?, ?, ?, ?, 0, '')
         ON CONFLICT(token_number) DO UPDATE SET
             care_context_id=excluded.care_context_id,
             patient_display_name=excluded.patient_display_name,
@@ -303,3 +305,30 @@ def append_to_hash_chain(
     block_index = cursor.lastrowid
     conn.close()
     return block_index or 0
+
+def update_session_lock(token_number: int, is_locked: bool, db_path: Optional[str] = None) -> bool:
+    """Lock or unlock a patient session."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE queue SET is_locked = ? WHERE token_number = ?",
+        (1 if is_locked else 0, token_number)
+    )
+    conn.commit()
+    rows_affected = cursor.rowcount
+    conn.close()
+    return rows_affected > 0
+
+
+def update_session_transcript(token_number: int, transcript: str, is_locked: bool, db_path: Optional[str] = None) -> bool:
+    """Update cumulative transcript for a patient session."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE queue SET cumulative_transcript = ?, is_locked = ? WHERE token_number = ?",
+        (transcript, 1 if is_locked else 0, token_number)
+    )
+    conn.commit()
+    rows_affected = cursor.rowcount
+    conn.close()
+    return rows_affected > 0

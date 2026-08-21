@@ -1,8 +1,12 @@
 import unittest
-from pipeline.crypto import encrypt_payload, decrypt_payload
-from pipeline.hash_chain import compute_record_hash, verify_record_hash
+import os
+from backend.pipeline.crypto import encrypt_payload, decrypt_payload
+from backend.pipeline.hash_chain import compute_record_hash, verify_record_hash
 
 class TestCryptoHash(unittest.TestCase):
+    def setUp(self):
+        os.environ["AES_ENCRYPTION_KEY"] = "TUVEU1lOQ19ERUZBVUxUX1NFQ1VSRV9LRVlfMzJCXyE="
+        os.environ["ABDM_SALT"] = "test-salt"
 
     def test_aes_gcm_round_trip(self):
         payload = '{"resource_type": "Bundle", "type": "document"}'

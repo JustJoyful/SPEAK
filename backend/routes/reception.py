@@ -5,7 +5,7 @@ import uuid
 import hmac
 import hashlib
 from typing import Dict, Any, List
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 
 from backend.pipeline.fhir_schema import QueueEntry
@@ -16,8 +16,10 @@ from backend.db.local import (
     seed_demo_queue,
     update_token_status
 )
+from backend.routes.auth_deps import verify_receptionist
 
-router = APIRouter(prefix="/queue", tags=["Reception & Queue"])
+# Enforce Receptionist RBAC on all routes in this router
+router = APIRouter(prefix="/queue", tags=["Reception & Queue"], dependencies=[Depends(verify_receptionist)])
 
 
 class EnqueuePatientRequest(BaseModel):

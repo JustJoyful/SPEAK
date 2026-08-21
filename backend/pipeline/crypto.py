@@ -1,23 +1,27 @@
 import os
 import base64
+import hashlib
+import uuid
+from datetime import datetime, timezone
+from typing import Tuple
+
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.exceptions import InvalidTag
 
-# 32 bytes (256-bit) default key for demonstration if env is missing
-DEFAULT_KEY = b'MEDSYNC_DEFAULT_SECURE_KEY_32B_!'
+from backend.pipeline.fhir_schema import FHIROPConsultRecord, EncryptedBundle, SyncPointer
 
 def get_encryption_key() -> bytes:
     """
     Retrieve the 256-bit AES-GCM key from the environment.
-    Falls back to a default key for demonstration purposes.
     """
     key_b64 = os.getenv("AES_ENCRYPTION_KEY")
-    if key_b64:
-        key = base64.b64decode(key_b64)
-        if len(key) != 32:
-            raise ValueError("AES_ENCRYPTION_KEY must be exactly 32 bytes (256-bit) when decoded.")
-        return key
-    return DEFAULT_KEY
+    if not key_b64:
+        raise ValueError("AES_ENCRYPTION_KEY environment variable is required for zero-trust encryption.")
+        
+    key = base64.b64decode(key_b64)
+    if len(key) != 32:
+        raise ValueError("AES_ENCRYPTION_KEY must be exactly 32 bytes (256-bit) when decoded.")
+    return key
 
 def encrypt_payload(payload: str) -> dict:
     """
@@ -64,3 +68,46 @@ def decrypt_payload(ciphertext_b64: str, nonce_b64: str, tag_b64: str) -> str:
         return decrypted_bytes.decode('utf-8')
     except InvalidTag:
         raise ValueError("Decryption failed: Data tampering detected or invalid key.")
+
+def encrypt_fhir_bundle(fhir_bundle: FHIROPConsultRecord, abha_hash: str, clinic_id: str) -> Tuple[EncryptedBundle, SyncPointer]:
+    """
+    Takes a plaintext FHIR R4 OP Consult bundle, computes its SHA-256 hash for the ledger,
+    encrypts the payload using AES-256-GCM, and generates the Zero-Knowledge Sync Pointer.
+    """
+    plaintext_json = fhir_bundle.model_dump_json()
+    record_hash = hashlib.sha256(plaintext_json.encode('utf-8')).hexdigest()
+    
+    encrypted_data = encrypt_payload(plaintext_json)
+    
+    bundle_id = str(uuid.uuid4())
+    sync_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    
+    # Normally we'd get the prev_hash from the local DB to maintain the hash chain.
+    # For now, we mock it.
+    prev_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+    
+    # Extract care_context_id from the reference e.g., "CareContext/CC-12345"
+    cc_ref = fhir_bundle.subject.reference
+    care_context_id = cc_ref.split("/")[-1] if "/" in cc_ref else cc_ref
+
+    encrypted_bundle = EncryptedBundle(
+        bundle_id=bundle_id,
+        care_context_id=care_context_id,
+        payload=encrypted_data["payload"],
+        nonce=encrypted_data["nonce"],
+        tag=encrypted_data["tag"],
+        record_hash=record_hash,
+        prev_hash=prev_hash,
+        created_at=now
+    )
+    
+    sync_pointer = SyncPointer(
+        sync_id=sync_id,
+        abha_hash=abha_hash,
+        clinic_id=clinic_id,
+        record_hash=record_hash,
+        timestamp=now
+    )
+    
+    return encrypted_bundle, sync_pointer
