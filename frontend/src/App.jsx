@@ -13,6 +13,15 @@ import { usePipelineStream } from "@/hooks/usePipelineStream"
 
 const EMPTY_CHECKS = { symptoms: "empty", diagnosis: "empty", medication: "empty", advice: "empty" }
 
+function readableError(error, fallback = "Unknown error") {
+  if (error instanceof Error && error.message) return error.message
+  if (typeof error === "string" && error.trim()) return error
+  if (error && typeof error === "object" && typeof error.message === "string" && error.message.trim()) {
+    return error.message
+  }
+  return fallback
+}
+
 export default function App() {
   const [remoteCases, setRemoteCases] = useState(null)
   const [queueLoading, setQueueLoading] = useState(backendConfigured)
@@ -70,10 +79,8 @@ export default function App() {
     if (!backendConfigured) return Promise.resolve()
     setQueueLoading(true)
     setQueueError("")
-    let cancelled = false
     return medSyncApi.getQueue()
       .then((payload) => {
-        if (cancelled) return
         const rows = Array.isArray(payload) ? payload : payload.queue ?? []
         const next = rows.map((row) => {
           const token = row.token_number ?? row.token
@@ -95,16 +102,16 @@ export default function App() {
         }
       })
       .catch((error) => {
-        if (cancelled) return
-        setQueueError(error.message)
+        const message = readableError(error, "Unable to load queue")
+        setQueueError(message)
         pushLog({
           stage: "NETWORK",
           level: "warn",
-          spans: [{ t: "text", v: `Backend queue unavailable · ${error.message} · local demo retained` }],
+          spans: [{ t: "text", v: `Backend queue unavailable · ${message} · local demo retained` }],
         })
       })
       .finally(() => {
-        if (!cancelled) setQueueLoading(false)
+        setQueueLoading(false)
       })
   }, [pushLog])
 
@@ -302,14 +309,15 @@ export default function App() {
         setChecks({ symptoms: "checked", diagnosis: "checked", medication: "checked", advice: "checked" })
         setStatuses((s) => ({ ...s, [activeToken]: "done" }))
       } catch (error) {
+        const message = readableError(error, "Unable to finish consultation")
         setProcessing(false)
         setSeam(false)
         setPhase("error")
-        setFinishError(error.message)
+        setFinishError(message)
         pushLog({
           stage: "ERROR",
           level: "error",
-          spans: [{ t: "text", v: `Consultation failed · ${error.message}` }],
+          spans: [{ t: "text", v: `Consultation failed · ${message}` }],
         })
       }
       return
