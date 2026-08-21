@@ -200,6 +200,18 @@ frontend/
 
 ---
 
+### ✅ Phase 6.5: Offline Store-and-Forward & Background Sync
+- [x] **`backend/db/local.py` & Schemas**:
+  - Add `sync_status` field to the local encounter record with states: `pending_structuring` ➔ `structured` ➔ `encrypted_stored` ➔ `synced`. Reuse queue status patterns.
+- [x] **`backend/routes/encounter.py`**:
+  - Two APIs for processing: One for debounced checklist updates while the doctor dictates, and one full API for FHIR R4 structuring.
+  - Doctor finishes dictation, local PII redaction runs, and the record enters `pending_structuring` state completely offline (no immediate cloud LLM call needed).
+- [x] **`backend/pipeline/sync_poller.py`**:
+  - A lightweight background poller that checks connectivity (via a simple periodic health-check fetch).
+  - When connection is active, drains the `pending_structuring` queue in order, calling the LLM structurer for each pending record.
+
+---
+
 ### ⏳ Phase 7: 3-Column React + Vite Frontend & Hero Visualizers
 - [ ] **Scaffold React + Vite application** (`frontend/`).
 - [ ] **`frontend/src/components/QueueColumn.jsx`**:
@@ -210,9 +222,11 @@ frontend/
   - Right container combining:
     - **`XRayPanel.jsx`**: Real-time terminal visualizer displaying all pipeline stages with live strikethrough redactions, AES lock icon, and hash-chain block hashes.
     - **`ChecklistPanel.jsx`**: Live ⬜➔✅ checklist for Symptoms, Diagnosis, Medication, and Advice.
+- [ ] **`frontend/src/components/SyncBadge.jsx`**:
+  - Small UI badge indicating offline status: e.g., "3 records pending sync". Drains as background poller completes LLM structuring.
 - [ ] **`frontend/src/components/RecordViewer.jsx`**:
   - Clean doctor-facing view of the finalized FHIR record and raw JSON inspector.
-- **Verification:** Full interactive browser demo run from reception queue pick to finalized zero-trust sync.
+- **Verification:** Full interactive browser demo run from reception queue pick to finalized zero-trust sync with offline capability demonstrated.
 
 ---
 

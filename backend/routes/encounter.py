@@ -74,26 +74,19 @@ async def finalize_encounter(token_number: int):
     if mask_result["pii_detected"]:
         event_bus.log_audit_event("PII_MASKED", f"Redacted entities: {mask_result['entity_counts']}", "System")
         
-    # Structure FHIR R4 Bundle using sanitized text
-    fhir_bundle, err = await sadiesink(sanitized_text, care_context_id)
-    if err or not fhir_bundle:
-        raise HTTPException(status_code=500, detail=f"Failed to structure clinical note: {err}")
-        
-    # Encrypt the bundle
-    # We pass the previously salted abha hash, simulating real encryption bounds
-    try:
-        encrypted_record, sync_pointer = encrypt_fhir_bundle(fhir_bundle, entry["abha_hash"], clinic_id="CLINIC-123")
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=f"Cryptographic failure: {str(e)}")
-        
-    # Mark queue as done
+    # Overwrite cumulative_transcript with sanitized text for offline storage
+    from backend.db.local import update_session_transcript, update_sync_status
+    update_session_transcript(token_number, sanitized_text, is_locked=False)
+    
+    # Mark queue as done from doctor's view, and sync_status as pending_structuring
     update_token_status(token_number, "done")
+    update_sync_status(token_number, "pending_structuring")
     active_session.clear_session(token_number)
     
-    event_bus.log_audit_event("FINALIZE_ENCOUNTER", f"Token {token_number} finalized, FHIR generated and encrypted.", "Doctor")
+    event_bus.log_audit_event("FINALIZE_ENCOUNTER", f"Token {token_number} finalized locally, pending sync.", "Doctor")
     
     return {
         "status": "success",
-        "message": "Encounter finalized and secured.",
-        "sync_pointer": sync_pointer.model_dump()
+        "message": "Encounter finalized locally and queued for secure sync.",
+        "sync_status": "pending_structuring"
     }

@@ -26,6 +26,7 @@ def init_db(db_path: Optional[str] = None) -> None:
         patient_display_name TEXT NOT NULL,
         abha_hash TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'waiting', -- waiting | in-progress | done
+        sync_status TEXT NOT NULL DEFAULT 'none', -- none | pending_structuring | structured | encrypted_stored | synced
         is_locked INTEGER NOT NULL DEFAULT 0,
         cumulative_transcript TEXT NOT NULL DEFAULT '',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -106,8 +107,8 @@ def enqueue_patient(
     cursor = conn.cursor()
     cursor.execute(
         """
-        INSERT INTO queue (token_number, care_context_id, patient_display_name, abha_hash, status, is_locked, cumulative_transcript)
-        VALUES (?, ?, ?, ?, ?, 0, '')
+        INSERT INTO queue (token_number, care_context_id, patient_display_name, abha_hash, status, sync_status, is_locked, cumulative_transcript)
+        VALUES (?, ?, ?, ?, ?, 'none', 0, '')
         ON CONFLICT(token_number) DO UPDATE SET
             care_context_id=excluded.care_context_id,
             patient_display_name=excluded.patient_display_name,
@@ -147,6 +148,16 @@ def get_queue_entry_by_token(token_number: int, db_path: Optional[str] = None) -
     return dict(row) if row else None
 
 
+def get_pending_sync_queue(db_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieve all entries from queue that are pending structuring."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM queue WHERE sync_status = 'pending_structuring' ORDER BY token_number ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def update_token_status(token_number: int, status: str, db_path: Optional[str] = None) -> bool:
     """Update patient token status (waiting -> in-progress -> done)."""
     conn = get_db_connection(db_path)
@@ -154,6 +165,20 @@ def update_token_status(token_number: int, status: str, db_path: Optional[str] =
     cursor.execute(
         "UPDATE queue SET status = ? WHERE token_number = ?",
         (status, token_number)
+    )
+    conn.commit()
+    rows_affected = cursor.rowcount
+    conn.close()
+    return rows_affected > 0
+
+
+def update_sync_status(token_number: int, sync_status: str, db_path: Optional[str] = None) -> bool:
+    """Update sync status for offline store-and-forward."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE queue SET sync_status = ? WHERE token_number = ?",
+        (sync_status, token_number)
     )
     conn.commit()
     rows_affected = cursor.rowcount

@@ -23,6 +23,10 @@ class QueueEntry(BaseModel):
         default="waiting",
         description="Current queue status of the patient encounter"
     )
+    sync_status: Literal["none", "pending_structuring", "structured", "encrypted_stored", "synced"] = Field(
+        default="none",
+        description="Offline store-and-forward sync status"
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         description="Timestamp when patient was enqueued"

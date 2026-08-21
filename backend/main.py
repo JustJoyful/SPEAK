@@ -4,17 +4,28 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
+from contextlib import asynccontextmanager
 from backend.routes.reception import router as reception_router
 from backend.routes.encounter import router as encounter_router
 from backend.db.local import init_db
+from backend.pipeline.sync_poller import start_sync_poller, stop_sync_poller
 
 # Initialize database schema on startup
 init_db()
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start the background sync poller for offline store-and-forward
+    start_sync_poller()
+    yield
+    # Stop the poller on shutdown
+    stop_sync_poller()
+
 app = FastAPI(
     title="MedSync API",
     description="Zero-Trust ABDM-Compliant Healthcare Gateway",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # ---------------------------------------------------------

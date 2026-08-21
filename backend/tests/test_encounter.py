@@ -67,11 +67,11 @@ def test_append_transcript(mock_publish, mock_extract, mock_append):
 
 @patch("backend.routes.encounter.active_session.get_current_state")
 @patch("backend.routes.encounter.get_queue_entry_by_token")
-@patch("backend.routes.encounter.sadiesink")
-@patch("backend.routes.encounter.encrypt_fhir_bundle")
 @patch("backend.routes.encounter.update_token_status")
 @patch("backend.routes.encounter.active_session.clear_session")
-def test_finalize_encounter(mock_clear, mock_update, mock_encrypt, mock_sadiesink, mock_get_entry, mock_get_state):
+@patch("backend.db.local.update_sync_status")
+@patch("backend.db.local.update_session_transcript")
+def test_finalize_encounter(mock_update_transcript, mock_update_sync, mock_clear, mock_update, mock_get_entry, mock_get_state):
     token = get_token()
     
     # Mocking state
@@ -82,17 +82,10 @@ def test_finalize_encounter(mock_clear, mock_update, mock_encrypt, mock_sadiesin
         "abha_hash": "hash123"
     }
     
-    # Mock LLM structurer
-    mock_fhir = MagicMock()
-    mock_sadiesink.return_value = (mock_fhir, "")
-    
-    # Mock Encrypt
-    mock_sync_pointer = MagicMock()
-    mock_sync_pointer.model_dump.return_value = {"sync_id": "123"}
-    mock_encrypt.return_value = (MagicMock(), mock_sync_pointer)
-    
     response = client.post(f"/encounter/{token}/finalize", headers={"X-Role": "Doctor"})
     
     assert response.status_code == 200
     assert response.json()["status"] == "success"
+    assert response.json()["sync_status"] == "pending_structuring"
     mock_update.assert_called_once_with(token, "done")
+    mock_update_sync.assert_called_once_with(token, "pending_structuring")
