@@ -180,10 +180,11 @@ export default function App() {
         try {
           await medSyncApi.selectToken(token)
         } catch (error) {
+          const message = readableError(error, "Token selection failed")
           pushLog({
             stage: "NETWORK",
             level: "warn",
-            spans: [{ t: "text", v: `Token selection failed · ${error.message}` }],
+            spans: [{ t: "text", v: `Token selection failed · ${message}` }],
           })
         }
       }
