@@ -174,12 +174,12 @@ frontend/
 
 ---
 
-### ⏳ Phase 5: AES-256-GCM Encryption & Tamper-Evident Hash Chain
-- [ ] **`backend/pipeline/crypto.py`**:
+### ✅ Phase 5: AES-256-GCM Encryption & Tamper-Evident Hash Chain
+- [x] **`backend/pipeline/crypto.py`**:
   - AES-256-GCM local bundle encryption/decryption with authenticated tags.
-- [ ] **`backend/pipeline/hash_chain.py`**:
+- [x] **`backend/pipeline/hash_chain.py`**:
   - Local SHA-256 blockchain-style ledger linkage (`record_hash` + `prev_hash`).
-- **Verification:** Cryptographic round-trip assert and hash chain tampering detection.
+- [x] **Verification:** Cryptographic round-trip assert and hash chain tampering detection.
 
 ---
 
