@@ -213,20 +213,26 @@ frontend/
 ---
 
 ### ⏳ Phase 7: 3-Column React + Vite Frontend & Hero Visualizers
-- [ ] **Scaffold React + Vite application** (`frontend/`).
-- [ ] **`frontend/src/components/QueueColumn.jsx`**:
-  - Left panel: Patient tokens, status chips (`waiting`, `in-progress`, `done`), token locking.
-- [ ] **`frontend/src/components/DictationColumn.jsx`**:
-  - Center panel: Mic waveform, cumulative live transcript stream, quick-insert clinical note pills, "Finish Consultation" button.
-- [ ] **`frontend/src/components/XRayChecklistColumn.jsx`**:
+- [x] **Scaffold React + Vite application** (`frontend/`).
+- 🟡 **Queue UI and backend seam** (`frontend/src/components/QueueRail.jsx`):
+  - Left panel implemented with patient tokens, status chips (`waiting`, `in-progress`, `done`), token locking, live queue loading, and safe status fallbacks.
+  - Local demo flow is tested; live backend queue/token integration is not yet verified.
+- 🟡 **Dictation UI and backend seam** (`frontend/src/components/DictationPanel.jsx`):
+  - Center panel implemented with mic visualizer, cumulative local transcript, editable notes, language selection, and "Finish Consultation" button.
+  - Local demo flow is tested; live backend finish-response behavior is not yet verified.
+- 🟡 **X-Ray and checklist UI** (`frontend/src/components/XrayLog.jsx`, `frontend/src/components/ChecklistPanel.jsx`):
   - Right container combining:
-    - **`XRayPanel.jsx`**: Real-time terminal visualizer displaying all pipeline stages with live strikethrough redactions, AES lock icon, and hash-chain block hashes.
+    - **`XrayLog.jsx`**: Terminal-style pipeline visualizer with redaction, validation, encryption, and ledger stages; optional SSE event ingestion is wired.
     - **`ChecklistPanel.jsx`**: Live ⬜➔✅ checklist for Symptoms, Diagnosis, Medication, and Advice.
+  - Local simulated pipeline is tested; live SSE/backend pipeline behavior is not yet verified.
 - [ ] **`frontend/src/components/SyncBadge.jsx`**:
-  - Small UI badge indicating offline status: e.g., "3 records pending sync". Drains as background poller completes LLM structuring.
-- [ ] **`frontend/src/components/RecordViewer.jsx`**:
-  - Clean doctor-facing view of the finalized FHIR record and raw JSON inspector.
-- **Verification:** Full interactive browser demo run from reception queue pick to finalized zero-trust sync with offline capability demonstrated.
+  - Not implemented. Offline pending-sync count is not currently surfaced as a dedicated badge.
+- 🟡 **`frontend/src/components/RecordViewer.jsx`**:
+  - Doctor-facing finalized-record modal, raw JSON inspector, accessibility behavior, and FHIR Bundle normalization are implemented and locally tested.
+  - Live backend FHIR response compatibility is not yet verified.
+- 🟡 **Verification:** Local interactive browser demo has been run from queue selection through simulated finalized record viewing; full live backend/offline sync demonstration remains pending.
+
+**Phase 7 implementation note:** The actual frontend uses Vite + React, not Next.js; there are no `pages/` or `app/` router files. The plan’s conceptual `QueueColumn`, `DictationColumn`, and `XRayChecklistColumn` are implemented as `QueueRail`, `DictationPanel`, `XrayLog`, and `ChecklistPanel`. Backend mode is optional via `VITE_MEDSYNC_API_URL` and has not been live end-to-end tested.
 
 ---
 
