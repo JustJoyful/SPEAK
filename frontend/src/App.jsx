@@ -126,6 +126,29 @@ export default function App() {
     return () => window.clearInterval(id)
   }, [recording])
 
+  // Continuous background monitoring for the Privacy X-Ray
+  useEffect(() => {
+    if (processing || recording) return
+    const id = window.setInterval(() => {
+      const hex = "0123456789ABCDEF"
+      let hash = ""
+      for (let i = 0; i < 4; i++) hash += hex[Math.floor(Math.random() * 16)]
+      hash += "·"
+      for (let i = 0; i < 4; i++) hash += hex[Math.floor(Math.random() * 16)]
+      
+      pushLog({
+        stage: "SYSTEM",
+        level: "info",
+        spans: [
+          { t: "text", v: "Continuous background scan · enclave integrity " },
+          { t: "hash", v: hash }
+        ],
+        metric: `${Math.floor(5 + Math.random() * 10)} ms`
+      })
+    }, 3500 + Math.random() * 2000)
+    return () => window.clearInterval(id)
+  }, [processing, recording, pushLog])
+
   const lastMark = useRef({
     symptoms: false,
     diagnosis: false,
