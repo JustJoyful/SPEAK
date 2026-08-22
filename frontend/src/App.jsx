@@ -5,6 +5,7 @@ import { DictationPanel } from "@/components/DictationPanel"
 import { XrayLog } from "@/components/XrayLog"
 import { ChecklistPanel } from "@/components/ChecklistPanel"
 import { RecordViewer } from "@/components/RecordViewer"
+import { SyncBadge } from "@/components/SyncBadge"
 import { cn } from "@/lib/utils"
 import { CASES, CHECKLIST_ORDER } from "@/lib/cases"
 import { buildPipeline, idleLines, makeRng } from "@/lib/pipeline"
@@ -45,6 +46,7 @@ export default function App() {
   const [egressClean, setEgressClean] = useState(false)
   const [seam, setSeam] = useState(false)
   const [record, setRecord] = useState(null)
+  const [online, setOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine)
 
   const timers = useRef([])
   const seq = useRef(0)
@@ -69,6 +71,17 @@ export default function App() {
   }, [])
 
   useEffect(() => clearTimers, [clearTimers])
+
+  useEffect(() => {
+    const handleOnline = () => setOnline(true)
+    const handleOffline = () => setOnline(false)
+    window.addEventListener("online", handleOnline)
+    window.addEventListener("offline", handleOffline)
+    return () => {
+      window.removeEventListener("online", handleOnline)
+      window.removeEventListener("offline", handleOffline)
+    }
+  }, [])
 
   const pushLog = useCallback((l) => {
     seq.current += 1
@@ -404,6 +417,7 @@ export default function App() {
             Zero-trust boundary active
           </span>
         </div>
+        <SyncBadge backendConfigured={backendConfigured} online={online} loading={queueLoading} error={queueError} />
       </header>
 
       {backendConfigured && (queueLoading || queueError || finishError) && (
