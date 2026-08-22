@@ -47,7 +47,7 @@ export default function App() {
   const [egressClean, setEgressClean] = useState(false)
   const [seam, setSeam] = useState(false)
   const [record, setRecord] = useState(null)
-  const [online, setOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine)
+  const [online, setOnline] = useState(() => typeof navigator !== "undefined" && navigator.onLine)
 
   const timers = useRef([])
   const seq = useRef(0)
@@ -433,6 +433,7 @@ export default function App() {
           <button
             type="button"
             onClick={toggleTheme}
+            aria-pressed={theme === "dark"}
             aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
             title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-clinical-line bg-clinical text-clinical-muted transition-colors hover:bg-clinical-surface hover:text-clinical-ink"
