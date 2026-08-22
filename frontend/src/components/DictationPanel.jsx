@@ -150,8 +150,8 @@ export function DictationPanel({
             className={cn(
               "relative flex h-[86px] w-[86px] items-center justify-center rounded-full text-clinical-surface transition-all duration-300 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-teal disabled:cursor-not-allowed disabled:opacity-45",
               recording
-                ? "animate-halo bg-coral shadow-[0_10px_30px_-8px_rgba(217,99,59,0.55)]"
-                : "bg-teal shadow-[0_8px_24px_-10px_rgba(31,111,111,0.6)] hover:scale-[1.035] active:scale-95",
+                ? "animate-halo bg-coral shadow-[var(--shadow-mic-coral)]"
+                : "bg-teal shadow-[var(--shadow-mic-teal)] hover:scale-[1.035] active:scale-95",
             )}
           >
             {recording ? (
@@ -294,7 +294,7 @@ export function DictationPanel({
               ? "cursor-default bg-teal-soft text-teal"
               : !hasText || processing || recording
                 ? "cursor-not-allowed bg-clinical text-clinical-muted/70 ring-1 ring-inset ring-clinical-line"
-                : "bg-teal text-clinical-surface shadow-[0_6px_18px_-8px_rgba(31,111,111,0.7)] hover:brightness-110 active:scale-[0.98]",
+                : "bg-teal text-clinical-surface shadow-[var(--shadow-finish)] hover:brightness-110 active:scale-[0.98]",
           )}
         >
           {processing ? (

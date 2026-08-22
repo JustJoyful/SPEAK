@@ -9,7 +9,7 @@ const STATUS_STYLE = {
   "in-progress": {
     label: "in progress",
     dot: "bg-running",
-    pill: "bg-running/12 text-[#8a5c12] border-running/35",
+    pill: "bg-running/12 text-running-ink border-running/35",
   },
   done: {
     label: "done",
@@ -49,7 +49,7 @@ export function QueueRail({ cases, activeToken, onSelect, doneCount, selectionBu
                 className={cn(
                   "group relative mb-1 flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-all duration-200 disabled:cursor-wait disabled:opacity-70",
                   active
-                    ? "bg-clinical-surface shadow-[0_1px_2px_rgba(26,34,38,0.06),0_6px_16px_-8px_rgba(31,111,111,0.28)]"
+                    ? "bg-clinical-surface shadow-[var(--shadow-card)]"
                     : "hover:bg-clinical-surface/70",
                 )}
               >
