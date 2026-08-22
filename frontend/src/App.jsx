@@ -195,6 +195,24 @@ export default function App() {
     [clearTimers],
   )
 
+  const handleDiscard = useCallback(() => {
+    clearTimers()
+    setRecording(false)
+    setProcessing(false)
+    setFinished(false)
+    setWords([])
+    setRawTranscript("")
+    setElapsed(0)
+    setChecks(EMPTY_CHECKS)
+    setRedactCount(0)
+    setEgressClean(false)
+    setPhase("idle")
+    setSeam(false)
+    setRecord(null)
+    setFinishError("")
+    setLogs(idleLines())
+  }, [clearTimers])
+
   const handleSelect = useCallback(
     async (token) => {
       if (token === activeToken) return
@@ -471,6 +489,7 @@ export default function App() {
           elapsed={elapsed}
           onToggle={handleToggle}
           onFinish={handleFinish}
+          onDiscard={handleDiscard}
           onReset={() => resetCase(activeToken)}
           onTranscriptEdit={handleTranscriptEdit}
         />

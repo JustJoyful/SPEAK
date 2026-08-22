@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Mic, Square, Check, RotateCcw, Loader2, Pencil } from "lucide-react"
 import { cn, clock } from "@/lib/utils"
 
@@ -55,11 +55,17 @@ export function DictationPanel({
   elapsed,
   onToggle,
   onFinish,
+  onDiscard,
   onReset,
   onTranscriptEdit,
 }) {
   const scrollRef = useRef(null)
+  const [editing, setEditing] = useState(false)
   const hasText = words.length > 0
+
+  useEffect(() => {
+    if (!hasText || recording || processing || finished) setEditing(false)
+  }, [finished, hasText, processing, recording])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -220,6 +226,27 @@ export function DictationPanel({
             <span className="tnum text-[0.68rem] text-clinical-muted">{wordCount} words</span>
             <span aria-hidden="true" className="h-3 w-px bg-clinical-line" />
             <span className="tnum text-[0.68rem] text-clinical-muted">{pct}%</span>
+            {hasText && !recording && !processing && !finished && (
+              <button
+                type="button"
+                onClick={() => setEditing((current) => !current)}
+                aria-label={editing ? "Save transcript edit" : "Edit transcript"}
+                title={editing ? "Save transcript edit" : "Edit transcript"}
+                className="flex items-center gap-1 rounded-md border border-clinical-line px-2 py-1 text-[0.68rem] font-medium text-clinical-muted transition-colors hover:border-teal/40 hover:text-teal"
+              >
+                {editing ? (
+                  <>
+                    <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                    Done
+                  </>
+                ) : (
+                  <>
+                    <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                    Edit
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
 
@@ -248,18 +275,18 @@ export function DictationPanel({
               />
             </p>
           ) : hasText ? (
-            /* ---- PAUSED / DONE: fully editable textarea ---- */
+            /* ---- PAUSED / DONE: read-only or explicitly editable textarea ---- */
             <textarea
               id="transcript-editor"
-              aria-label="Transcript — click to edit"
+              aria-label={editing ? "Transcript — editing" : "Transcript"}
               value={rawTranscript}
               onChange={(e) => onTranscriptEdit(e.target.value)}
-              readOnly={finished || processing}
+              readOnly={!editing || finished || processing}
               spellCheck={true}
               className={cn(
                 "w-full max-w-[62ch] resize-none bg-transparent text-[1.02rem] leading-relaxed tracking-[-0.005em] text-clinical-ink outline-none transition-all duration-200",
                 "min-h-[120px] pb-2",
-                finished || processing
+                !editing || finished || processing
                   ? "cursor-default select-text"
                   : "cursor-text rounded-md border border-transparent focus:border-teal/30 focus:bg-teal-soft/30 focus:px-2 focus:py-1",
               )}
@@ -284,33 +311,43 @@ export function DictationPanel({
             ? "Signed. A copy has been chain-linked to the patient's ABHA record."
             : "On finish, identifiers are stripped before anything leaves this device."}
         </p>
-        <button
-          type="button"
-          onClick={onFinish}
-          disabled={!hasText || finished || processing || recording}
-          className={cn(
-            "flex shrink-0 items-center gap-2 rounded-md px-5 py-2.5 text-[0.85rem] font-semibold transition-all duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal",
-            finished
-              ? "cursor-default bg-teal-soft text-teal"
-              : !hasText || processing || recording
-                ? "cursor-not-allowed bg-clinical text-clinical-muted/70 ring-1 ring-inset ring-clinical-line"
-                : "bg-teal text-clinical-surface shadow-[var(--shadow-finish)] hover:brightness-110 active:scale-[0.98]",
-          )}
-        >
-          {processing ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              Sealing
-            </>
-          ) : finished ? (
-            <>
-              <Check className="h-4 w-4" strokeWidth={2.6} aria-hidden="true" />
-              Finalised
-            </>
-          ) : (
-            "Finish"
-          )}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onDiscard}
+            disabled={!hasText || finished || processing || recording}
+            className="rounded-md border border-clinical-line px-3.5 py-2.5 text-[0.82rem] font-semibold text-clinical-muted transition-colors hover:border-rejected/40 hover:text-rejected disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Discard
+          </button>
+          <button
+            type="button"
+            onClick={onFinish}
+            disabled={!hasText || finished || processing || recording}
+            className={cn(
+              "flex items-center gap-2 rounded-md px-5 py-2.5 text-[0.85rem] font-semibold transition-all duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal",
+              finished
+                ? "cursor-default bg-teal-soft text-teal"
+                : !hasText || processing || recording
+                  ? "cursor-not-allowed bg-clinical text-clinical-muted/70 ring-1 ring-inset ring-clinical-line"
+                  : "bg-teal text-clinical-surface shadow-[var(--shadow-finish)] hover:brightness-110 active:scale-[0.98]",
+            )}
+          >
+            {processing ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                Sealing
+              </>
+            ) : finished ? (
+              <>
+                <Check className="h-4 w-4" strokeWidth={2.6} aria-hidden="true" />
+                Finalised
+              </>
+            ) : (
+              "Finish"
+            )}
+          </button>
+        </div>
       </div>
     </section>
   )
