@@ -52,9 +52,9 @@ export const medSyncApi = {
     method: "POST",
     body: JSON.stringify({ text, language }),
   }),
+  fetchRecord: (tokenNumber) => request(`/encounter/${tokenNumber}/record`),
 }
 
 export function pipelineStreamUrl() {
   return backendConfigured ? endpoint("/events/stream") : null
 }
-

@@ -90,7 +90,8 @@ async def process_pending_record(record: dict) -> bool:
             "stage": "SYNC",
             "level": "success",
             "message": f"Synced record {token_number} to Turso",
-            "egress_clean": True
+            "egress_clean": True,
+            "token_number": token_number
         })
         
         logger.info(f"Successfully synced token {token_number}")

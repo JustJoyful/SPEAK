@@ -297,6 +297,19 @@ def insert_encounter(
     conn.commit()
     conn.close()
 
+def get_encounter_by_care_context(care_context_id: str, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Fetch an encrypted encounter by its care_context_id."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT bundle_id, care_context_id, payload, nonce, tag, record_hash, prev_hash, created_at FROM encounters WHERE care_context_id = ?",
+        (care_context_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return dict(row)
+    return None
 
 def get_latest_hash_from_chain(db_path: Optional[str] = None) -> str:
     """Fetch previous hash or genesis hash (64 zeros) for the hash chain."""

@@ -272,28 +272,49 @@ export default function App() {
     async (token) => {
       if (token === activeToken) return
       setSelectionBusy(token)
+      
+      const targetCase = cases.find((c) => c.token === token)
+      const isDone = targetCase?.status === "done"
+
       if (backendConfigured) {
         try {
-          await medSyncApi.selectToken(token)
-          setStatuses((s) => ({ ...s, [token]: "in-progress" }))
+          if (isDone) {
+            // Fetch structured record if it's finished and synced
+            const recordData = await medSyncApi.fetchRecord(token)
+            setRecord(recordData)
+            setSelectionBusy(null)
+            return
+          } else {
+            await medSyncApi.selectToken(token)
+            setStatuses((s) => ({ ...s, [token]: "in-progress" }))
+          }
         } catch (error) {
-          const message = readableError(error, "Token selection failed")
+          const message = readableError(error, isDone ? "Record not ready yet" : "Token selection failed")
           pushLog({
             stage: "NETWORK",
             level: "warn",
-            spans: [{ t: "text", v: `Token selection failed · ${message}` }],
+            spans: [{ t: "text", v: `Token action failed · ${message}` }],
           })
           setSelectionBusy(null)
           return
         }
       } else {
+        if (isDone) {
+           // For local mock, just set the record to the target's fhir
+           setRecord({ token, fhir: targetCase.fhir })
+           setSelectionBusy(null)
+           return
+        }
         setStatuses((s) => ({ ...s, [token]: "in-progress" }))
       }
+
+      const target = cases.find((c) => c.token === token)
       setActiveToken(token)
+      setActive(target)
       resetCase(token)
       setSelectionBusy(null)
     },
-    [activeToken, pushLog, resetCase],
+    [activeToken, cases, resetCase, backendConfigured, pushLog],
   )
 
   const scriptWords = useMemo(() => active.script.split(/\s+/), [active.script])
@@ -443,8 +464,8 @@ export default function App() {
 
     if (backendConfigured) {
       try {
-        const result = await medSyncApi.finishEncounter(activeToken, { text: transcript, language: "en-IN" })
-        setRecord(result?.record ?? result)
+        await medSyncApi.finishEncounter(activeToken, { text: transcript, language: "en-IN" })
+        // Do NOT setRecord here; it runs in the background. User can click "done" to fetch the record later.
         setProcessing(false)
         setFinished(true)
         setSeam(false)

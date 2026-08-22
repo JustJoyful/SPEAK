@@ -103,3 +103,25 @@ async def finalize_encounter(token_number: int):
         "message": "Encounter finalized locally and queued for secure sync.",
         "sync_status": "pending_structuring"
     }
+
+@router.get("/{token_number}/record")
+async def get_encounter_record(token_number: int):
+    """Fetches the decrypted, structured record if it has been synced."""
+    entry = get_queue_entry_by_token(token_number)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Token not found.")
+        
+    if entry["sync_status"] not in ["structured", "synced"]:
+        raise HTTPException(status_code=423, detail="Record is still being processed. Please wait a moment.")
+        
+    from backend.db.local import get_encounter_by_care_context
+    encounter = get_encounter_by_care_context(entry["care_context_id"])
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter record not found.")
+        
+    from backend.pipeline.crypto import decrypt_payload
+    try:
+        decrypted_json = decrypt_payload(encounter["payload"], encounter["nonce"], encounter["tag"])
+        return json.loads(decrypted_json)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to decrypt record: {e}")

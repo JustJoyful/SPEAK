@@ -35,22 +35,38 @@ async def sadiesink(clinical_text: str, care_context_id: str, api_key: Optional[
     """
     # Real implementation using httpx (e.g., OpenAI API)
     api_key = api_key or os.getenv("LLM_API_KEY")
-    if not api_key:
-        return None, "Error: LLM_API_KEY not provided."
-
-    url = "https://api.openai.com/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "gpt-4o-mini",
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": clinical_text}
-        ],
-        "temperature": 0.0
-    }
+    deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+    
+    if deepseek_key:
+        url = "https://api.deepseek.com/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {deepseek_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": clinical_text}
+            ],
+            "temperature": 0.0
+        }
+    elif api_key:
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "gpt-4o-mini",
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": clinical_text}
+            ],
+            "temperature": 0.0
+        }
+    else:
+        return None, "Error: DEEPSEEK_API_KEY or LLM_API_KEY not provided."
     
     try:
         async with httpx.AsyncClient() as client:
