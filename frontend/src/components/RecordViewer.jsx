@@ -60,20 +60,46 @@ export function RecordViewer({ record, onClose, isBackend = false }) {
 
 function normalizeClinicalRecord(record) {
   const direct = record?.fhir ?? record ?? {}
-  if (direct.resourceType !== "Bundle" || !Array.isArray(direct.entry)) return direct
+  if (direct.resourceType === "Bundle" && Array.isArray(direct.entry)) {
+    const resources = direct.entry.map((entry) => entry?.resource).filter(Boolean)
+    const conditions = resources.filter((resource) => resource.resourceType === "Condition")
+    const medications = resources.filter((resource) => resource.resourceType === "MedicationRequest")
+    const carePlans = resources.filter((resource) => resource.resourceType === "CarePlan")
+    const observations = resources.filter((resource) => resource.resourceType === "Observation")
 
-  const resources = direct.entry.map((entry) => entry?.resource).filter(Boolean)
-  const conditions = resources.filter((resource) => resource.resourceType === "Condition")
-  const medications = resources.filter((resource) => resource.resourceType === "MedicationRequest")
-  const carePlans = resources.filter((resource) => resource.resourceType === "CarePlan")
-  const observations = resources.filter((resource) => resource.resourceType === "Observation")
+    return {
+      ...direct,
+      symptoms: observations.map((item) => item.code?.text || item.valueString).filter(Boolean),
+      diagnosis: conditions.map((item) => item.code?.text).filter(Boolean),
+      medication: medications.map((item) => item.medicationCodeableConcept?.text || item.medicationReference?.display).filter(Boolean),
+      advice: carePlans.flatMap((item) => item.activity?.map((activity) => activity.detail?.description || activity.detail?.code?.text).filter(Boolean) || []),
+    }
+  }
+
+  // NRCeS OP Consult Record or custom dict
+  const sym = direct.symptoms || direct.chief_complaints || direct.presentingComplaint || []
+  const diag = direct.diagnosis || direct.diagnoses || direct.assessment || []
+  const med = direct.medication || direct.medications || []
+  const adv = direct.advice || direct.advice_and_followup || direct.plan || []
 
   return {
     ...direct,
-    symptoms: observations.map((item) => item.code?.text || item.valueString).filter(Boolean),
-    diagnosis: conditions.map((item) => item.code?.text).filter(Boolean),
-    medication: medications.map((item) => item.medicationCodeableConcept?.text || item.medicationReference?.display).filter(Boolean),
-    advice: carePlans.flatMap((item) => item.activity?.map((activity) => activity.detail?.description || activity.detail?.code?.text).filter(Boolean) || []),
+    symptoms: Array.isArray(sym) ? sym : [String(sym)],
+    diagnosis: Array.isArray(diag)
+      ? diag.map((d) => (typeof d === "object" ? d.code?.text || d.notes || JSON.stringify(d) : String(d)))
+      : [String(diag)],
+    medication: Array.isArray(med)
+      ? med.map((m) => {
+          if (typeof m === "string") return m
+          if (typeof m === "object") {
+            const name = m.medication?.text || m.name || m.text || "Prescription"
+            const dosage = m.dosage?.instructions || m.dosage?.timing || (typeof m.dosage === "string" ? m.dosage : "")
+            return dosage ? `${name} (${dosage})` : name
+          }
+          return String(m)
+        })
+      : [String(med)],
+    advice: Array.isArray(adv) ? adv : adv ? [String(adv)] : [],
   }
 }
 

@@ -13,8 +13,6 @@ from backend.routes.events import router as events_router
 from backend.db.local import init_db
 from backend.pipeline.sync_poller import start_sync_poller, stop_sync_poller
 
-from backend.pipeline.pii_mask import global_pii_masker
-
 # Initialize database schema on startup
 init_db()
 
@@ -22,8 +20,8 @@ init_db()
 async def lifespan(app: FastAPI):
     # Start the background sync poller for offline store-and-forward
     start_sync_poller()
-    # Preload the GLiNER model for zero-latency inference
-    global_pii_masker.load_model()
+    # NOTE: Models (GLiNER, Whisper, Silero VAD) are loaded lazily on first use.
+    # Preloading all at startup caused OOM kills on constrained edge hardware.
     yield
     # Stop the poller on shutdown
     stop_sync_poller()
@@ -40,15 +38,26 @@ app = FastAPI(
 # ---------------------------------------------------------
 
 # 1. CORS Configuration
-# For production, this should be restricted to the actual frontend origin
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+# Allow local development frontend origins and configured FRONTEND_URL
+FRONTEND_URL = os.getenv("FRONTEND_URL", "")
+allowed_origins = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://127.0.0.1:5173",
+]
+if FRONTEND_URL and FRONTEND_URL not in allowed_origins:
+    allowed_origins.append(FRONTEND_URL)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL],
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1)(:[0-9]+)?$",
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["*"], # In production, restrict to X-Role, Content-Type, etc.
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allow_headers=["Content-Type", "Accept", "X-Role", "Authorization"],
 )
 
 # 2. Security Headers Middleware
@@ -57,14 +66,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         # Prevent Clickjacking
         response.headers["X-Frame-Options"] = "DENY"
-        # XSS Protection (Legacy, but good for defense-in-depth)
-        response.headers["X-XSS-Protection"] = "1; mode=block"
         # Prevent MIME-sniffing
         response.headers["X-Content-Type-Options"] = "nosniff"
-        # Strict Transport Security (HSTS) - Assuming HTTPS in production
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        # Content Security Policy (Basic API configuration)
-        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none';"
+        # Note: Content-Security-Policy is intentionally omitted from the API.
+        # It is only meaningful on HTML document responses (the frontend's job).
+        # Setting it on JSON API responses can block cross-origin fetch in some
+        # browser configurations.
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)

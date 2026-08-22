@@ -46,7 +46,7 @@ async def process_pending_record(record: dict) -> bool:
         
         await event_bus.publish("global", {
             "stage": "MODEL",
-            "level": "success",
+            "level": "ok",
             "message": f"FHIR bundle structured successfully"
         })
         
@@ -73,7 +73,7 @@ async def process_pending_record(record: dict) -> bool:
         
         await event_bus.publish("global", {
             "stage": "CHAIN",
-            "level": "success",
+            "level": "ok",
             "message": f"Appended to local hash chain. Hash: {encrypted_record.record_hash[:8]}..."
         })
         
@@ -88,7 +88,7 @@ async def process_pending_record(record: dict) -> bool:
         
         await event_bus.publish("global", {
             "stage": "SYNC",
-            "level": "success",
+            "level": "ok",
             "message": f"Synced record {token_number} to Turso",
             "egress_clean": True,
             "token_number": token_number

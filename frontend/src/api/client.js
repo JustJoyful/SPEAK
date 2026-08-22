@@ -1,6 +1,6 @@
 /** Optional REST boundary for the MedSync edge node. */
 
-const API_URL = (import.meta.env.VITE_MEDSYNC_API_URL || "").replace(/\/$/, "")
+const API_URL = (import.meta.env.VITE_MEDSYNC_API_URL || "http://localhost:8000").replace(/\/$/, "")
 
 export const backendConfigured = Boolean(API_URL)
 
@@ -13,10 +13,13 @@ async function request(path, options = {}) {
     throw new Error("MedSync backend is not configured")
   }
 
+  const role = path.startsWith("/queue") ? "Receptionist" : "Doctor"
+
   const response = await fetch(endpoint(path), {
     ...options,
     headers: {
       Accept: "application/json",
+      "X-Role": role,
       ...(options.body ? { "Content-Type": "application/json" } : {}),
       ...options.headers,
     },
@@ -37,6 +40,7 @@ async function request(path, options = {}) {
 }
 
 export const medSyncApi = {
+  baseURL: API_URL,
   isConfigured: () => backendConfigured,
   getQueue: () => request("/queue/today"),
   seedQueue: () => request("/queue/seed", { method: "POST" }),

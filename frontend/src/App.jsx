@@ -202,19 +202,21 @@ export default function App() {
   }, [loadQueue])
 
   const handlePipelineEvent = useCallback((event) => {
+    if (!event || typeof event !== "object") return
     const stage = event.stage || event.type || "PIPELINE"
     const message = event.message || event.detail || event.data
+    const level = event.level === "success" ? "ok" : event.level || "info"
     if (event.phase) setPhase(event.phase)
-    if (event.stage === "PII" && (event.level === "redact" || event.redacted)) {
+    if (event.stage === "PII" && (level === "redact" || event.redacted)) {
       setRedactCount((count) => count + 1)
     }
-    if (event.egress_clean || event.stage === "MODEL" && event.level === "info") setEgressClean(true)
+    if (event.egress_clean || (event.stage === "MODEL" && level === "info")) setEgressClean(true)
     if (event.checklist) {
       setChecks((current) => ({ ...current, ...event.checklist }))
     }
     pushLog({
       stage,
-      level: event.level || "info",
+      level,
       spans: event.spans || [{ t: "text", v: message || "Pipeline event received" }],
       metric: event.metric,
       progress: event.progress,
@@ -275,50 +277,54 @@ export default function App() {
     async (token) => {
       if (token === activeToken) return
       setSelectionBusy(token)
-      
+
       const targetCase = cases.find((c) => c.token === token)
       const isDone = targetCase?.status === "done"
 
-      if (backendConfigured) {
-        try {
-          if (isDone) {
-            // Fetch structured record if it's finished and synced
-            const recordData = await medSyncApi.fetchRecord(token)
-            setRecord(recordData)
-            setSelectionBusy(null)
-            return
-          } else {
+      // Always switch to the selected patient first
+      setActiveToken(token)
+      resetCase(token)
+
+      if (!isDone) {
+        // Start a new encounter session
+        if (backendConfigured) {
+          try {
             await medSyncApi.selectToken(token)
             setStatuses((s) => ({ ...s, [token]: "in-progress" }))
+          } catch (error) {
+            pushLog({
+              stage: "NETWORK",
+              level: "warn",
+              spans: [{ t: "text", v: `Token selection failed · ${readableError(error)}` }],
+            })
           }
+        } else {
+          setStatuses((s) => ({ ...s, [token]: "in-progress" }))
+        }
+        setSelectionBusy(null)
+        return
+      }
+
+      // Done case — try to open the structured record as an overlay
+      if (backendConfigured) {
+        try {
+          const recordData = await medSyncApi.fetchRecord(token)
+          setRecord(recordData)
         } catch (error) {
-          const message = readableError(error, isDone ? "Record not ready yet" : "Token selection failed")
           pushLog({
             stage: "NETWORK",
             level: "warn",
-            spans: [{ t: "text", v: `Token action failed · ${message}` }],
+            spans: [{ t: "text", v: `Record not ready · ${readableError(error, "still processing")}` }],
           })
-          setSelectionBusy(null)
-          return
         }
       } else {
-        if (isDone) {
-           // For local mock, just set the record to the target's fhir
-           setRecord({ token, fhir: targetCase.fhir })
-           setSelectionBusy(null)
-           return
-        }
-        setStatuses((s) => ({ ...s, [token]: "in-progress" }))
+        setRecord({ token, fhir: targetCase?.fhir ?? null, mock: true })
       }
-
-      const target = cases.find((c) => c.token === token)
-      setActiveToken(token)
-      setActive(target)
-      resetCase(token)
       setSelectionBusy(null)
     },
-    [activeToken, cases, resetCase, backendConfigured, pushLog],
+    [activeToken, cases, resetCase, pushLog],
   )
+
 
 
   const handleWSTranscript = useCallback((newText) => {
@@ -473,7 +479,7 @@ export default function App() {
         { t: "text", v: " · no audio egress" },
       ],
     })
-  }, [recording, activeToken, pushLog])
+  }, [recording, activeToken, pushLog, useMockData, startStreaming, stopStreaming])
 
   const handleTranscriptEdit = useCallback((text) => {
     setRawTranscript(text)
@@ -488,9 +494,17 @@ export default function App() {
     if (!useMockData) stopStreaming()
     const transcript = words.join(" ")
 
-    if (backendConfigured) {
+    if (backendConfigured && !useMockData) {
       try {
         await medSyncApi.finishEncounter(activeToken, { text: transcript, language: "en-IN" })
+
+        // Try to fetch the structured record immediately — may be 423 if still processing
+        let fetchedRecord = null
+        try {
+          fetchedRecord = await medSyncApi.fetchRecord(activeToken)
+        } catch {
+          // Record not ready yet — that's fine, doctor can view it via queue later
+        }
 
         setProcessing(false)
         setFinished(true)
@@ -498,6 +512,7 @@ export default function App() {
         setPhase("persisted")
         setChecks({ symptoms: "checked", diagnosis: "checked", medication: "checked", advice: "checked" })
         setStatuses((s) => ({ ...s, [activeToken]: "done" }))
+        if (fetchedRecord) setRecord(fetchedRecord)
       } catch (error) {
         const message = readableError(error, "Unable to finish consultation")
         setProcessing(false)
@@ -513,7 +528,8 @@ export default function App() {
       return
     }
 
-    const steps = buildPipeline(active, transcript, active.token * 104729)
+    // --- Local mock path ---
+    const steps = buildPipeline(active, transcript, (active?.token || activeToken) * 104729)
 
     let t = 0
     steps.forEach((s) => {
@@ -521,10 +537,10 @@ export default function App() {
       later(() => {
         if (s.phase) setPhase(s.phase)
         if (s.fx === "redact") setRedactCount((n) => n + 1)
-        if (s.stage === "MODEL" && s.level === "info") setEgressClean(true)
+        if (s.stage === "MODEL" && (s.level === "info" || s.level === "ok" || s.level === "success")) setEgressClean(true)
         pushLog({
           stage: s.stage,
-          level: s.level,
+          level: s.level === "success" ? "ok" : s.level || "info",
           spans: s.spans,
           metric: s.metric,
           progress: s.progress,
@@ -537,10 +553,21 @@ export default function App() {
       setProcessing(false)
       setFinished(true)
       setSeam(false)
+      setPhase("sealed")
       setChecks({ symptoms: "checked", diagnosis: "checked", medication: "checked", advice: "checked" })
       setStatuses((s) => ({ ...s, [activeToken]: "done" }))
+      // In mock mode, build a synthetic record so RecordViewer can open
+      setRecord({
+        token: activeToken,
+        fhir: active?.fhir ?? null,
+        mock: true,
+        symptoms: active?.fhir?.symptoms || (active?.complaint ? [active.complaint] : ["General consultation"]),
+        diagnosis: active?.fhir?.diagnosis || (active?.complaint ? [active.complaint] : ["Clinical finding"]),
+        medication: active?.fhir?.medication || [],
+        advice: active?.fhir?.advice || ["Follow-up as required"],
+      })
     }, t + 320)
-  }, [words, processing, finished, active, activeToken, later, pushLog])
+  }, [words, processing, finished, active, activeToken, later, pushLog, useMockData, stopStreaming])
 
   const busy = processing || recording
   const doneCount = cases.filter((c) => c.status === "done").length
@@ -685,7 +712,7 @@ export default function App() {
           <ChecklistPanel active={active} state={checks} />
         </aside>
       </main>
-      {finished && record && <RecordViewer record={record} isBackend={backendConfigured} onClose={() => setRecord(null)} />}
+      {record && <RecordViewer record={record} isBackend={backendConfigured} onClose={() => setRecord(null)} />}
     </div>
   )
 }

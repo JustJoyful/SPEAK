@@ -5,8 +5,11 @@ const LEVEL = {
   info: { text: "text-vault-ink/70", badge: "text-vault-dim", glyph: "·" },
   run: { text: "text-running", badge: "text-running", glyph: "▸" },
   ok: { text: "text-verified", badge: "text-verified", glyph: "✓" },
+  success: { text: "text-verified", badge: "text-verified", glyph: "✓" },
   warn: { text: "text-running", badge: "text-running", glyph: "!" },
+  warning: { text: "text-running", badge: "text-running", glyph: "!" },
   err: { text: "text-rejected", badge: "text-rejected", glyph: "×" },
+  error: { text: "text-rejected", badge: "text-rejected", glyph: "×" },
   redact: { text: "text-vault-ink/85", badge: "text-rejected", glyph: "▚" },
   hash: { text: "text-verified", badge: "text-verified", glyph: "#" },
 }
@@ -22,6 +25,9 @@ const PHASE_LABEL = {
   validating: "validate",
   encrypting: "encrypt",
   sealed: "sealed",
+  persisted: "persisted",
+  synced: "synced",
+  error: "error",
 }
 
 export function XrayLog({ lines, phase, busy, redactCount, egressClean }) {
@@ -53,10 +59,10 @@ export function XrayLog({ lines, phase, busy, redactCount, egressClean }) {
         <span
           className={cn(
             "font-mono text-[0.62rem] uppercase tracking-[0.1em] transition-colors",
-            busy ? "text-running" : phase === "sealed" ? "text-verified" : "text-vault-dim",
+            busy ? "text-running" : phase === "sealed" || phase === "persisted" || phase === "synced" ? "text-verified" : "text-vault-dim",
           )}
         >
-          {PHASE_LABEL[phase]}
+          {PHASE_LABEL[phase] || phase || "monitoring"}
           {busy && <span className="animate-caret">_</span>}
         </span>
       </div>
@@ -67,8 +73,8 @@ export function XrayLog({ lines, phase, busy, redactCount, egressClean }) {
         <Counter label="egress PII" value={egressClean ? "00" : "--"} tone={egressClean ? "ok" : "dim"} />
         <Counter
           label="integrity"
-          value={phase === "sealed" ? "PASS" : busy ? "···" : "—"}
-          tone={phase === "sealed" ? "ok" : busy ? "warn" : "dim"}
+          value={phase === "sealed" || phase === "persisted" || phase === "synced" ? "PASS" : busy ? "···" : "—"}
+          tone={phase === "sealed" || phase === "persisted" || phase === "synced" ? "ok" : busy ? "warn" : "dim"}
         />
       </div>
 
@@ -76,15 +82,16 @@ export function XrayLog({ lines, phase, busy, redactCount, egressClean }) {
       <div ref={ref} className="vault-scroll min-h-0 flex-1 overflow-y-auto px-3 py-3">
         <ol className="flex flex-col gap-[3px]">
           {lines.map((l) => {
-            const lv = LEVEL[l.level]
+            const lv = LEVEL[l.level] || LEVEL.info
+            const spans = Array.isArray(l.spans) ? l.spans : typeof l.spans === "string" ? [{ t: "text", v: l.spans }] : [{ t: "text", v: String(l.message || "") }]
             return (
               <li
                 key={l.id}
                 className={cn(
                   "animate-line-in group relative flex gap-2 rounded px-1.5 py-[3px] font-mono text-[0.7rem] leading-[1.45]",
                   l.depth === 1 && "ml-3.5 opacity-85",
-                  l.level === "redact" && "bg-rejected/[0.06]",
-                  l.level === "ok" && "bg-verified/[0.035]",
+                  (l.level === "redact") && "bg-rejected/[0.06]",
+                  (l.level === "ok" || l.level === "success") && "bg-verified/[0.035]",
                 )}
               >
                 <span className={cn("w-2.5 shrink-0 select-none text-center", lv.badge)} aria-hidden="true">
@@ -93,12 +100,14 @@ export function XrayLog({ lines, phase, busy, redactCount, egressClean }) {
 
                 {l.depth !== 1 && (
                   <span className="w-[3.1rem] shrink-0 select-none text-[0.6rem] uppercase tracking-[0.06em] text-vault-dim">
-                    {l.stage}
+                    {l.stage || "LOG"}
                   </span>
                 )}
 
                 <span className={cn("min-w-0 flex-1 break-words", lv.text)}>
-                  {l.spans.map((s, i) => {
+                  {spans.map((s, i) => {
+                    if (!s) return null
+                    if (typeof s === "string") return <span key={i}>{s}</span>
                     if (s.t === "text") return <span key={i}>{s.v}</span>
                     if (s.t === "em")
                       return (

@@ -11,21 +11,25 @@ from backend.events.bus import event_bus
 from backend.pipeline.llm_structurer import sadiesink
 from backend.pipeline.crypto import encrypt_fhir_bundle
 from backend.db.local import get_queue_entry_by_token, update_token_status
+from backend.pipeline.pii_mask import global_pii_masker
 
 router = APIRouter(
     prefix="/encounter",
     tags=["Doctor Encounter"],
-    dependencies=[Depends(verify_doctor)]
+    # NOTE: Router-level dependencies are NOT used here because they also apply to
+    # WebSocket routes, and the browser WebSocket API cannot send custom headers.
+    # Instead, verify_doctor is applied per HTTP endpoint, and the WebSocket
+    # authenticates via a ?role= query parameter.
 )
 
-@router.post("/{token_number}/select")
+@router.post("/{token_number}/select", dependencies=[Depends(verify_doctor)])
 async def select_patient(token_number: int):
     """Doctor selects a patient from the queue."""
     result = active_session.select_token(token_number)
     event_bus.log_audit_event("SELECT_PATIENT", f"Token {token_number} selected.", "Doctor")
     return result
 
-@router.post("/{token_number}/transcript")
+@router.post("/{token_number}/transcript", dependencies=[Depends(verify_doctor)])
 async def append_transcript(token_number: int, data: Dict[str, str] = Body(...)):
     """Receives partial transcript from the frontend (STT)."""
     text = data.get("text", "")
@@ -40,7 +44,7 @@ async def append_transcript(token_number: int, data: Dict[str, str] = Body(...))
         
     return {"status": "success", "cumulative_length": len(cumulative_text)}
 
-@router.get("/{token_number}/checklist/stream")
+@router.get("/{token_number}/checklist/stream", dependencies=[Depends(verify_doctor)])
 async def stream_checklist(token_number: int):
     """SSE endpoint for streaming checklist updates to the frontend."""
     async def event_generator():
@@ -57,71 +61,79 @@ async def stream_checklist(token_number: int):
 
 
 @router.websocket("/{token_number}/audio-stream")
-async def stream_audio(websocket: WebSocket, token_number: int):
+async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
+    """
+    Receive raw PCM int16 audio at 16 kHz mono and stream back transcript chunks.
+
+    Authentication: The browser WebSocket API cannot send custom headers, so role
+    is passed as a query parameter (?role=doctor) by the frontend instead.
+    """
+    if role.lower() != "doctor":
+        await websocket.close(code=1008, reason="Forbidden: Doctor role required")
+        return
     await websocket.accept()
-    from backend.pipeline.stt import stt_engine
+
+    from backend.pipeline.stt import get_stt_engine
     from backend.pipeline.pii_mask import mask_pii
     import numpy as np
-    
+
+    stt = get_stt_engine()  # lazy singleton — model loads on first WS connection
     buffer = b""
+
     try:
         while True:
             data = await websocket.receive_bytes()
             buffer += data
-            
-            # 16000 Hz, 16-bit PCM = 32000 bytes per second
-            # Process every 1 second of audio (32000 bytes)
-            if len(buffer) >= 32000:
-                # Ensure 16-bit int alignment (2 bytes per sample)
-                aligned_len = len(buffer) - (len(buffer) % 2)
-                chunk = buffer[:aligned_len]
-                buffer = buffer[aligned_len:]
-                
-                audio_np = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
-                
-                # VAD detection
-                timestamps = stt_engine.get_speech_timestamps(audio_np)
-                
-                if timestamps:
-                    # Speech detected, transcribe segment
-                    text = stt_engine.transcribe_segment(audio_np)
-                    if text:
-                        # Append to global transcript
-                        active_session.append_transcript(token_number, text)
-                        
-                        # Trap C: Mask PII before sending back
-                        mask_result = mask_pii(text)
-                        
-                        # Also get checklist update
-                        cumulative = active_session.get_current_state(token_number).get("transcript", "")
-                        checklist, _ = await extract_checklist(cumulative)
-                        
-                        await websocket.send_json({
-                            "type": "TRANSCRIPT_CHUNK",
-                            "text": mask_result["sanitized_text"],
-                            "ui_toggles": checklist.model_dump() if checklist else {}
-                        })
-                
-    except WebSocketDisconnect:
-        try:
-            if len(buffer) >= 3200: # at least 0.1s
-                aligned_len = len(buffer) - (len(buffer) % 2)
-                chunk = buffer[:aligned_len]
-                audio_np = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
-                if stt_engine.get_speech_timestamps(audio_np):
-                    text = stt_engine.transcribe_segment(audio_np)
-                    if text:
-                        active_session.append_transcript(token_number, text)
-                        mask_result = mask_pii(text)
-                        await websocket.send_json({
-                            "type": "TRANSCRIPT_CHUNK",
-                            "text": mask_result["sanitized_text"],
-                            "ui_toggles": {}
-                        })
-        except Exception:
-            pass
 
-@router.post("/{token_number}/finalize")
+            # 16 000 Hz × 2 bytes (int16) = 32 000 bytes per second.
+            # Process in 1-second chunks to balance latency vs. transcription quality.
+            if len(buffer) >= 32000:
+                aligned_len = len(buffer) - (len(buffer) % 2)
+                chunk, buffer = buffer[:aligned_len], buffer[aligned_len:]
+
+                audio_np = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+
+                if not stt.has_speech(audio_np):
+                    continue  # Silence — skip Whisper, avoid hallucinations
+
+                text = stt.transcribe_segment(audio_np)
+                if not text:
+                    continue
+
+                active_session.append_transcript(token_number, text)
+
+                # Regex-only PII pass during live dictation — fast (<1ms) and avoids
+                # loading GLiNER (500MB) while Whisper is already in RAM.
+                # Full GLiNER masking happens at finalize before any cloud egress.
+                regex_spans = global_pii_masker._regex_pass(text)
+                display_text = text
+                for span in sorted(regex_spans, key=lambda s: s["start"], reverse=True):
+                    display_text = display_text[:span["start"]] + span["replacement"] + display_text[span["end"]:]
+
+                state = active_session.get_current_state(token_number)
+                cumulative = state.get("transcript", "")
+                checklist, _ = await extract_checklist(cumulative)
+
+                await websocket.send_json({
+                    "type": "TRANSCRIPT_CHUNK",
+                    "text": display_text,
+                    "ui_toggles": checklist.model_dump() if checklist else {}
+                })
+
+    except WebSocketDisconnect:
+        # Flush any remaining audio in the buffer on clean disconnect
+        try:
+            if len(buffer) >= 3200:  # at least 0.1 s
+                aligned_len = len(buffer) - (len(buffer) % 2)
+                audio_np = np.frombuffer(buffer[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
+                if stt.has_speech(audio_np):
+                    text = stt.transcribe_segment(audio_np)
+                    if text:
+                        active_session.append_transcript(token_number, text)
+        except Exception:  # noqa: BLE001
+            pass  # Best-effort flush — don't crash on disconnect
+
+@router.post("/{token_number}/finalize", dependencies=[Depends(verify_doctor)])
 async def finalize_encounter(token_number: int):
     """Finalizes the encounter, structuring the note and encrypting it."""
     state = active_session.get_current_state(token_number)
@@ -171,7 +183,7 @@ async def finalize_encounter(token_number: int):
         "sync_status": "pending_structuring"
     }
 
-@router.get("/{token_number}/record")
+@router.get("/{token_number}/record", dependencies=[Depends(verify_doctor)])
 async def get_encounter_record(token_number: int):
     """Fetches the decrypted, structured record if it has been synced."""
     entry = get_queue_entry_by_token(token_number)

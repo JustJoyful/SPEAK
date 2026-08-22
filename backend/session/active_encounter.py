@@ -75,13 +75,20 @@ class ActiveEncounterSession:
         """Returns safe view of active session state."""
         entry = get_queue_entry_by_token(token_number, db_path=db_path)
         if not entry:
-            raise HTTPException(status_code=404, detail="Token not found")
-            
+            return {
+                "active_token_number": token_number,
+                "patient_display_name": "Unknown",
+                "is_locked": False,
+                "has_transcript": False,
+                "transcript": "",
+            }
+
         return {
             "active_token_number": token_number,
             "patient_display_name": entry["patient_display_name"],
             "is_locked": bool(entry["is_locked"]),
-            "has_transcript": bool(entry["cumulative_transcript"])
+            "has_transcript": bool(entry["cumulative_transcript"]),
+            "transcript": entry.get("cumulative_transcript", ""),
         }
 
 
