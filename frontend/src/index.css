@@ -61,11 +61,13 @@
   * {
     border-color: var(--color-clinical-line);
   }
+
   html {
     background-color: var(--color-clinical);
     -webkit-tap-highlight-color: transparent;
     transition: background-color 0.2s ease, color 0.2s ease;
   }
+
   body {
     background-color: var(--color-clinical);
     color: var(--color-clinical-ink);
@@ -74,6 +76,7 @@
     -webkit-font-smoothing: antialiased;
     transition: background-color 0.2s ease, color 0.2s ease;
   }
+
   ::selection {
     background-color: color-mix(in srgb, var(--color-teal) 22%, transparent);
   }
@@ -93,12 +96,14 @@
     transform: translateY(6px);
     filter: blur(2px);
   }
+
   to {
     opacity: 1;
     transform: none;
     filter: blur(0);
   }
 }
+
 .animate-line-in {
   animation: lineIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
@@ -108,11 +113,13 @@
     opacity: 0;
     transform: translateY(0.14em);
   }
+
   to {
     opacity: 1;
     transform: none;
   }
 }
+
 .animate-word-in {
   animation: wordIn 0.22s ease-out both;
 }
@@ -123,17 +130,20 @@
       0 0 0 0 color-mix(in srgb, var(--color-coral) 45%, transparent),
       0 0 0 0 color-mix(in srgb, var(--color-coral) 25%, transparent);
   }
+
   70% {
     box-shadow:
       0 0 0 18px color-mix(in srgb, var(--color-coral) 0%, transparent),
       0 0 0 34px color-mix(in srgb, var(--color-coral) 0%, transparent);
   }
+
   100% {
     box-shadow:
       0 0 0 0 color-mix(in srgb, var(--color-coral) 0%, transparent),
       0 0 0 0 color-mix(in srgb, var(--color-coral) 0%, transparent);
   }
 }
+
 .animate-halo {
   animation: haloPulse 1.9s ease-out infinite;
 }
@@ -142,19 +152,19 @@
   0% {
     background-position: 0 -240px;
   }
+
   100% {
     background-position: 0 240px;
   }
 }
+
 .seam-flow {
-  background-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    color-mix(in srgb, var(--color-verified) 0%, transparent) 30%,
-    color-mix(in srgb, var(--color-verified) 85%, transparent) 50%,
-    color-mix(in srgb, var(--color-verified) 0%, transparent) 70%,
-    transparent 100%
-  );
+  background-image: linear-gradient(to bottom,
+      transparent 0%,
+      color-mix(in srgb, var(--color-verified) 0%, transparent) 30%,
+      color-mix(in srgb, var(--color-verified) 85%, transparent) 50%,
+      color-mix(in srgb, var(--color-verified) 0%, transparent) 70%,
+      transparent 100%);
   background-size: 100% 240px;
   background-repeat: repeat-y;
   animation: seamFlow 2.4s linear infinite;
@@ -165,21 +175,22 @@
     background-size: 0% 100%;
     opacity: 1;
   }
+
   60% {
     background-size: 100% 100%;
     opacity: 1;
   }
+
   100% {
     background-size: 100% 100%;
     opacity: 1;
   }
 }
+
 .animate-redact {
-  background-image: linear-gradient(
-    to right,
-    color-mix(in srgb, var(--color-rejected) 26%, transparent),
-    color-mix(in srgb, var(--color-rejected) 26%, transparent)
-  );
+  background-image: linear-gradient(to right,
+      color-mix(in srgb, var(--color-rejected) 26%, transparent),
+      color-mix(in srgb, var(--color-rejected) 26%, transparent));
   background-repeat: no-repeat;
   animation: redact 0.5s cubic-bezier(0.65, 0, 0.35, 1) both;
 }
@@ -189,15 +200,18 @@
     transform: scale(0.5);
     opacity: 0;
   }
+
   60% {
     transform: scale(1.18);
     opacity: 1;
   }
+
   100% {
     transform: scale(1);
     opacity: 1;
   }
 }
+
 .animate-tick {
   animation: tickPop 0.34s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
@@ -206,52 +220,71 @@
   from {
     transform: translateX(-100%);
   }
+
   to {
     transform: translateX(220%);
   }
 }
+
 .animate-sweep {
   animation: sweep 1.5s ease-in-out infinite;
 }
 
 @keyframes caretBlink {
+
   0%,
   49% {
     opacity: 1;
   }
+
   50%,
   100% {
     opacity: 0;
   }
 }
+
 .animate-caret {
   animation: caretBlink 1s steps(1) infinite;
 }
 
 @keyframes barLive {
+
   0%,
   100% {
     transform: scaleY(0.25);
   }
+
   50% {
     transform: scaleY(1);
   }
 }
 
 @keyframes glowBreath {
+
   0%,
   100% {
     opacity: 0.35;
   }
+
   50% {
     opacity: 0.85;
   }
 }
+
 .animate-breath {
   animation: glowBreath 2.6s ease-in-out infinite;
 }
 
+/* Keep theme changes visually synchronized without changing keyframe timing. */
+.theme-transition,
+.theme-transition * {
+  transition-property: background-color, border-color, color, fill, stroke, box-shadow, opacity, transform !important;
+  transition-duration: 400ms !important;
+  transition-timing-function: ease !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {
@@ -265,13 +298,16 @@
 .vault-scroll::-webkit-scrollbar {
   width: 6px;
 }
+
 .vault-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
+
 .vault-scroll::-webkit-scrollbar-thumb {
   background: var(--color-scrollbar);
   border-radius: 3px;
 }
+
 .vault-scroll::-webkit-scrollbar-thumb:hover {
   background: var(--color-scrollbar-hover);
 }

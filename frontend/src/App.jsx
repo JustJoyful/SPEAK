@@ -404,7 +404,7 @@ export default function App() {
   const doneCount = cases.filter((c) => c.status === "done").length
 
   return (
-    <div className="flex min-h-screen flex-col bg-clinical lg:h-screen lg:overflow-hidden">
+    <div className="theme-transition flex min-h-screen flex-col bg-clinical lg:h-screen lg:overflow-hidden">
       <header className="grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-clinical-line bg-clinical-surface px-5 py-3 lg:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-8 w-8 items-center justify-center rounded-md bg-teal text-clinical-surface">
