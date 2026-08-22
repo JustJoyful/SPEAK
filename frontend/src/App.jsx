@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Moon, ShieldCheck, Stethoscope, Sun } from "lucide-react"
+import { Monitor, Moon, ShieldCheck, Stethoscope, Sun, X } from "lucide-react"
 import { QueueRail } from "@/components/QueueRail"
 import { DictationPanel } from "@/components/DictationPanel"
 import { XrayLog } from "@/components/XrayLog"
@@ -13,6 +13,40 @@ import { backendConfigured, medSyncApi } from "@/api/client"
 import { usePipelineStream } from "@/hooks/usePipelineStream"
 
 const EMPTY_CHECKS = { symptoms: "empty", diagnosis: "empty", medication: "empty", advice: "empty" }
+const QUEUE_WIDTH_KEY = "queueColumnWidth"
+const MIN_QUEUE_WIDTH = 200
+const MAX_QUEUE_WIDTH = 500
+const MONITOR_HEADER_WIDTH = 180
+const MONITOR_HEADER_HEIGHT = 48
+const MIN_MONITOR_WIDTH = 300
+const MIN_MONITOR_HEIGHT = 300
+const DEFAULT_MONITOR_SPLIT = 0.6
+const MIN_MONITOR_SECTION_HEIGHT = 90
+
+function getDefaultMonitorSize() {
+  const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1440
+  const baseWidth = viewportWidth >= 1280 ? 396 : 360
+  return {
+    width: Math.max(MIN_MONITOR_WIDTH, Math.min(baseWidth, viewportWidth * 0.9)),
+    height: 600,
+  }
+}
+
+function clampQueueWidth(width) {
+  return Math.min(MAX_QUEUE_WIDTH, Math.max(MIN_QUEUE_WIDTH, width))
+}
+
+function getInitialQueueWidth() {
+  const fallback = typeof window !== "undefined" && window.innerWidth >= 1280 ? 272 : 248
+  if (typeof window === "undefined") return fallback
+
+  try {
+    const stored = Number(window.localStorage.getItem(QUEUE_WIDTH_KEY))
+    return Number.isFinite(stored) ? clampQueueWidth(stored) : fallback
+  } catch {
+    return fallback
+  }
+}
 
 function readableError(error, fallback = "Unknown error") {
   if (error instanceof Error && error.message) return error.message
@@ -25,6 +59,8 @@ function readableError(error, fallback = "Unknown error") {
 
 export default function App() {
   const [theme, setTheme] = useState("light")
+  const [queueWidth, setQueueWidth] = useState(getInitialQueueWidth)
+  const [isQueueResizing, setIsQueueResizing] = useState(false)
   const [remoteCases, setRemoteCases] = useState(null)
   const [queueLoading, setQueueLoading] = useState(backendConfigured)
   const [queueError, setQueueError] = useState("")
@@ -48,9 +84,23 @@ export default function App() {
   const [seam, setSeam] = useState(false)
   const [record, setRecord] = useState(null)
   const [online, setOnline] = useState(() => typeof navigator !== "undefined" && navigator.onLine)
+  const [isMonitorVisible, setIsMonitorVisible] = useState(false)
+  const [monitorPosition, setMonitorPosition] = useState(null)
+  const [isMonitorDragging, setIsMonitorDragging] = useState(false)
+  const [monitorSize, setMonitorSize] = useState(getDefaultMonitorSize)
+  const [isMonitorResizing, setIsMonitorResizing] = useState(false)
+  const [monitorSplitRatio, setMonitorSplitRatio] = useState(DEFAULT_MONITOR_SPLIT)
+  const [isMonitorSplitResizing, setIsMonitorSplitResizing] = useState(false)
 
   const timers = useRef([])
   const seq = useRef(0)
+  const queueResizeStart = useRef({ x: 0, width: queueWidth })
+  const mainRef = useRef(null)
+  const monitorRef = useRef(null)
+  const monitorDragStart = useRef({ offsetX: 0, offsetY: 0 })
+  const monitorResizeStart = useRef({ x: 0, y: 0, width: monitorSize.width, height: monitorSize.height })
+  const monitorSectionsRef = useRef(null)
+  const monitorSplitStart = useRef({ y: 0, ratio: DEFAULT_MONITOR_SPLIT })
 
   const cases = useMemo(
     () => remoteCases
@@ -77,9 +127,176 @@ export default function App() {
     document.documentElement.setAttribute("data-theme", theme)
   }, [theme])
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(QUEUE_WIDTH_KEY, String(queueWidth))
+    } catch {
+      // Ignore unavailable browser storage; resizing still works for this session.
+    }
+  }, [queueWidth])
+
+  const handleQueueResizeStart = useCallback((event) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    queueResizeStart.current = { x: event.clientX, width: queueWidth }
+    setIsQueueResizing(true)
+  }, [queueWidth])
+
+  useEffect(() => {
+    if (!isQueueResizing) return undefined
+
+    const handleQueueResizeMove = (event) => {
+      const delta = event.clientX - queueResizeStart.current.x
+      setQueueWidth(clampQueueWidth(queueResizeStart.current.width + delta))
+    }
+    const stopQueueResize = () => setIsQueueResizing(false)
+
+    window.addEventListener("mousemove", handleQueueResizeMove)
+    window.addEventListener("mouseup", stopQueueResize)
+    window.addEventListener("blur", stopQueueResize)
+    return () => {
+      window.removeEventListener("mousemove", handleQueueResizeMove)
+      window.removeEventListener("mouseup", stopQueueResize)
+      window.removeEventListener("blur", stopQueueResize)
+    }
+  }, [isQueueResizing])
+
   const toggleTheme = useCallback(() => {
     setTheme((current) => current === "light" ? "dark" : "light")
   }, [])
+
+  const hideMonitor = useCallback(() => {
+    setIsMonitorVisible(false)
+    setMonitorPosition(null)
+    setMonitorSize(getDefaultMonitorSize())
+    setMonitorSplitRatio(DEFAULT_MONITOR_SPLIT)
+  }, [])
+
+  const toggleMonitor = useCallback(() => {
+    if (isMonitorVisible) {
+      hideMonitor()
+      return
+    }
+    setMonitorPosition(null)
+    setMonitorSize(getDefaultMonitorSize())
+    setMonitorSplitRatio(DEFAULT_MONITOR_SPLIT)
+    setIsMonitorVisible(true)
+  }, [hideMonitor, isMonitorVisible])
+
+  const handleMonitorDragStart = useCallback((event) => {
+    if (event.button !== 0 || !mainRef.current || !monitorRef.current) return
+    event.preventDefault()
+    const panelRect = monitorRef.current.getBoundingClientRect()
+    monitorDragStart.current = {
+      offsetX: event.clientX - panelRect.left,
+      offsetY: event.clientY - panelRect.top,
+    }
+    setIsMonitorDragging(true)
+  }, [])
+
+  useEffect(() => {
+    if (!isMonitorDragging) return undefined
+
+    const handleMonitorDragMove = (event) => {
+      const mainRect = mainRef.current?.getBoundingClientRect()
+      const panelRect = monitorRef.current?.getBoundingClientRect()
+      if (!mainRect || !panelRect) return
+
+      const rawLeft = event.clientX - mainRect.left - monitorDragStart.current.offsetX
+      const rawTop = event.clientY - mainRect.top - monitorDragStart.current.offsetY
+      const maxLeft = Math.max(0, mainRect.width - MONITOR_HEADER_WIDTH)
+      const maxTop = Math.max(0, mainRect.height - MONITOR_HEADER_HEIGHT)
+      setMonitorPosition({
+        left: Math.min(maxLeft, Math.max(0, rawLeft)),
+        top: Math.min(maxTop, Math.max(0, rawTop)),
+      })
+    }
+    const stopMonitorDrag = () => setIsMonitorDragging(false)
+
+    window.addEventListener("mousemove", handleMonitorDragMove)
+    window.addEventListener("mouseup", stopMonitorDrag)
+    window.addEventListener("blur", stopMonitorDrag)
+    return () => {
+      window.removeEventListener("mousemove", handleMonitorDragMove)
+      window.removeEventListener("mouseup", stopMonitorDrag)
+      window.removeEventListener("blur", stopMonitorDrag)
+    }
+  }, [isMonitorDragging])
+
+  const handleMonitorResizeStart = useCallback((event) => {
+    if (event.button !== 0 || !mainRef.current || !monitorRef.current) return
+    event.preventDefault()
+    event.stopPropagation()
+    monitorResizeStart.current = {
+      x: event.clientX,
+      y: event.clientY,
+      width: monitorSize.width,
+      height: monitorSize.height,
+    }
+    setIsMonitorResizing(true)
+  }, [monitorSize])
+
+  useEffect(() => {
+    if (!isMonitorResizing) return undefined
+
+    const handleMonitorResizeMove = (event) => {
+      const mainRect = mainRef.current?.getBoundingClientRect()
+      if (!mainRect) return
+
+      const maxWidth = Math.max(MIN_MONITOR_WIDTH, Math.min(window.innerWidth * 0.9, mainRect.width))
+      const maxHeight = Math.max(MIN_MONITOR_HEIGHT, Math.min(window.innerHeight * 0.9, mainRect.height))
+      const deltaX = event.clientX - monitorResizeStart.current.x
+      const deltaY = event.clientY - monitorResizeStart.current.y
+      setMonitorSize({
+        width: Math.min(maxWidth, Math.max(MIN_MONITOR_WIDTH, monitorResizeStart.current.width + deltaX)),
+        height: Math.min(maxHeight, Math.max(MIN_MONITOR_HEIGHT, monitorResizeStart.current.height + deltaY)),
+      })
+    }
+    const stopMonitorResize = () => setIsMonitorResizing(false)
+
+    document.addEventListener("mousemove", handleMonitorResizeMove)
+    document.addEventListener("mouseup", stopMonitorResize)
+    window.addEventListener("blur", stopMonitorResize)
+    return () => {
+      document.removeEventListener("mousemove", handleMonitorResizeMove)
+      document.removeEventListener("mouseup", stopMonitorResize)
+      window.removeEventListener("blur", stopMonitorResize)
+    }
+  }, [isMonitorResizing])
+
+  const handleMonitorSplitStart = useCallback((event) => {
+    if (event.button !== 0 || !monitorSectionsRef.current) return
+    event.preventDefault()
+    event.stopPropagation()
+    monitorSplitStart.current = { y: event.clientY, ratio: monitorSplitRatio }
+    setIsMonitorSplitResizing(true)
+  }, [monitorSplitRatio])
+
+  useEffect(() => {
+    if (!isMonitorSplitResizing) return undefined
+
+    const handleMonitorSplitMove = (event) => {
+      const sectionsRect = monitorSectionsRef.current?.getBoundingClientRect()
+      if (!sectionsRect?.height) return
+
+      const minRatio = Math.min(0.5, MIN_MONITOR_SECTION_HEIGHT / sectionsRect.height)
+      const maxRatio = 1 - minRatio
+      const deltaRatio = (event.clientY - monitorSplitStart.current.y) / sectionsRect.height
+      setMonitorSplitRatio(
+        Math.min(maxRatio, Math.max(minRatio, monitorSplitStart.current.ratio + deltaRatio)),
+      )
+    }
+    const stopMonitorSplit = () => setIsMonitorSplitResizing(false)
+
+    document.addEventListener("mousemove", handleMonitorSplitMove)
+    document.addEventListener("mouseup", stopMonitorSplit)
+    window.addEventListener("blur", stopMonitorSplit)
+    return () => {
+      document.removeEventListener("mousemove", handleMonitorSplitMove)
+      document.removeEventListener("mouseup", stopMonitorSplit)
+      window.removeEventListener("blur", stopMonitorSplit)
+    }
+  }, [isMonitorSplitResizing])
 
   useEffect(() => {
     const handleOnline = () => setOnline(true)
@@ -450,6 +667,17 @@ export default function App() {
           </div>
           <button
             type="button"
+            onClick={toggleMonitor}
+            aria-controls="privacy-monitor"
+            aria-expanded={isMonitorVisible}
+            aria-label={isMonitorVisible ? "Hide privacy monitor" : "Show privacy monitor"}
+            title={isMonitorVisible ? "Hide privacy monitor" : "Show privacy monitor"}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-clinical-line bg-clinical text-clinical-muted transition-colors hover:bg-clinical-surface hover:text-clinical-ink"
+          >
+            <Monitor className="h-4 w-4" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
             onClick={toggleTheme}
             aria-pressed={theme === "dark"}
             aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
@@ -476,8 +704,24 @@ export default function App() {
         </div>
       )}
 
-      <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[248px_minmax(0,1fr)_13px_360px] xl:grid-cols-[272px_minmax(0,1fr)_13px_396px]">
-        <QueueRail cases={cases} activeToken={activeToken} onSelect={handleSelect} doneCount={doneCount} selectionBusy={selectionBusy} />
+      <main
+        ref={mainRef}
+        className="relative grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[var(--queue-width)_minmax(0,1fr)]"
+        style={{ "--queue-width": `${queueWidth}px` }}
+      >
+        <div className="relative min-w-0">
+          <QueueRail cases={cases} activeToken={activeToken} onSelect={handleSelect} doneCount={doneCount} selectionBusy={selectionBusy} />
+          <button
+            type="button"
+            onMouseDown={handleQueueResizeStart}
+            aria-label="Resize queue column"
+            title="Resize queue column"
+            className={cn(
+              "absolute right-0 top-0 z-10 hidden h-full w-2 translate-x-1/2 cursor-col-resize border-0 bg-transparent transition-colors hover:bg-teal/20 lg:block",
+              isQueueResizing && "bg-teal/30",
+            )}
+          />
+        </div>
 
         <DictationPanel
           active={active}
@@ -494,39 +738,83 @@ export default function App() {
           onTranscriptEdit={handleTranscriptEdit}
         />
 
-        <div
-          className="relative hidden overflow-hidden bg-vault lg:block"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Zero-trust boundary between clinical zone and security zone"
-        >
-          <span aria-hidden="true" className="absolute inset-y-0 left-0 w-px bg-clinical-line" />
-          <span
-            aria-hidden="true"
+        {isMonitorVisible && (
+          <aside
+            id="privacy-monitor"
+            ref={monitorRef}
             className={cn(
-              "absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 transition-opacity duration-500",
-              seam ? "seam-flow opacity-100" : "opacity-0",
+              "absolute z-20 flex h-[600px] max-h-[calc(100%-1.5rem)] min-h-0 w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border border-vault-line bg-vault text-vault-ink shadow-2xl lg:w-[360px] xl:w-[396px]",
+              monitorPosition ? "" : "inset-y-3 right-3",
+              (isMonitorDragging || isMonitorResizing || isMonitorSplitResizing) && "select-none",
             )}
-          />
-          <span
-            aria-hidden="true"
-            className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-vault-line"
-          />
-          <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 -rotate-90 whitespace-nowrap font-mono text-[0.5rem] uppercase tracking-[0.34em] text-vault-dim/80">
-            trust boundary
-          </span>
-        </div>
-
-        <aside className="flex min-h-0 flex-col border-t border-vault-line bg-vault text-vault-ink lg:border-t-0">
-          <XrayLog
-            lines={logs}
-            phase={phase}
-            busy={busy}
-            redactCount={redactCount}
-            egressClean={egressClean}
-          />
-          <ChecklistPanel active={active} state={checks} />
-        </aside>
+            style={{
+              ...(monitorPosition ? { left: monitorPosition.left, top: monitorPosition.top } : {}),
+              width: monitorSize.width,
+              height: monitorSize.height,
+            }}
+          >
+            <div
+              role="presentation"
+              onMouseDown={handleMonitorDragStart}
+              className={cn(
+                "absolute inset-x-0 top-0 z-10 h-12 cursor-move",
+                isMonitorDragging && "cursor-grabbing",
+              )}
+            />
+            <button
+              type="button"
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={hideMonitor}
+              aria-label="Close privacy monitor"
+              title="Close privacy monitor"
+              className="absolute right-2 top-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-vault-line bg-vault text-vault-dim transition-colors hover:border-vault-ink/40 hover:text-vault-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vault-ink"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onMouseDown={handleMonitorResizeStart}
+              aria-label="Resize privacy monitor"
+              title="Resize privacy monitor"
+              className={cn(
+                "absolute bottom-0 right-0 z-20 h-5 w-5 cursor-nwse-resize rounded-tl-md border-l border-t border-vault-line bg-vault/90 text-vault-dim transition-colors hover:bg-vault-raised hover:text-vault-ink",
+                isMonitorResizing && "bg-vault-raised text-vault-ink",
+              )}
+            >
+              <span aria-hidden="true" className="text-[0.7rem] leading-none">⌟</span>
+            </button>
+            <div ref={monitorSectionsRef} className="flex min-h-0 flex-1 flex-col">
+              <div
+                className="min-h-0 overflow-hidden"
+                style={{ flex: `${monitorSplitRatio} 1 0%` }}
+              >
+                <XrayLog
+                  lines={logs}
+                  phase={phase}
+                  busy={busy}
+                  redactCount={redactCount}
+                  egressClean={egressClean}
+                />
+              </div>
+              <button
+                type="button"
+                onMouseDown={handleMonitorSplitStart}
+                aria-label="Resize monitor sections"
+                title="Resize monitor sections"
+                className={cn(
+                  "z-20 h-1.5 shrink-0 cursor-row-resize border-y border-vault-line bg-vault-line/60 transition-colors hover:bg-vault-ink/40",
+                  isMonitorSplitResizing && "bg-vault-ink/60",
+                )}
+              />
+              <div
+                className="min-h-0 overflow-y-auto"
+                style={{ flex: `${1 - monitorSplitRatio} 1 0%` }}
+              >
+                <ChecklistPanel active={active} state={checks} />
+              </div>
+            </div>
+          </aside>
+        )}
       </main>
       {finished && record && <RecordViewer record={record} isBackend={backendConfigured} onClose={() => setRecord(null)} />}
     </div>
