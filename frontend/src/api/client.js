@@ -40,15 +40,15 @@ export const medSyncApi = {
   isConfigured: () => backendConfigured,
   getQueue: () => request("/queue/today"),
   seedQueue: () => request("/queue/seed", { method: "POST" }),
-  selectToken: (tokenNumber) => request("/encounter/select-token", {
+  selectToken: (tokenNumber) => request(`/encounter/${tokenNumber}/select`, {
     method: "POST",
     body: JSON.stringify({ token_number: tokenNumber }),
   }),
-  processText: ({ text, language }) => request("/encounter/text", {
+  processText: (tokenNumber, { text, language }) => request(`/encounter/${tokenNumber}/transcript`, {
     method: "POST",
     body: JSON.stringify({ text, language }),
   }),
-  finishEncounter: ({ text, language } = {}) => request("/encounter/finish", {
+  finishEncounter: (tokenNumber, { text, language } = {}) => request(`/encounter/${tokenNumber}/finalize`, {
     method: "POST",
     body: JSON.stringify({ text, language }),
   }),

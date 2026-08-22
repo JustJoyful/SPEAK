@@ -420,7 +420,7 @@ export default function App() {
 
     if (backendConfigured) {
       try {
-        const result = await medSyncApi.finishEncounter({ text: transcript, language: "en-IN" })
+        const result = await medSyncApi.finishEncounter(activeToken, { text: transcript, language: "en-IN" })
         setRecord(result?.record ?? result)
         setProcessing(false)
         setFinished(true)
