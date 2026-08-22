@@ -225,8 +225,9 @@ frontend/
     - **`XrayLog.jsx`**: Terminal-style pipeline visualizer with redaction, validation, encryption, and ledger stages; optional SSE event ingestion is wired.
     - **`ChecklistPanel.jsx`**: Live ⬜➔✅ checklist for Symptoms, Diagnosis, Medication, and Advice.
   - Local simulated pipeline is tested; live SSE/backend pipeline behavior is not yet verified.
-- [ ] **`frontend/src/components/SyncBadge.jsx`**:
-  - Not implemented. Offline pending-sync count is not currently surfaced as a dedicated badge.
+- 🟡 **`frontend/src/components/SyncBadge.jsx`**:
+  - Implemented connection/status badge for local demo, connecting, edge connected, edge unavailable, and offline states.
+  - Pending-count display is supported by the component interface, but it is not yet connected to a live sync-status payload.
 - 🟡 **`frontend/src/components/RecordViewer.jsx`**:
   - Doctor-facing finalized-record modal, raw JSON inspector, accessibility behavior, and FHIR Bundle normalization are implemented and locally tested.
   - Live backend FHIR response compatibility is not yet verified.
