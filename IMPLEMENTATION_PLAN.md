@@ -211,39 +211,28 @@ frontend/
 
 ---
 
-### ⏳ Phase 7: Backend-Frontend Integration Plan
+### ⏳ Phase 7: 3-Column React + Vite Frontend & Hero Visualizers
 - [x] **Scaffold React + Vite application** (`frontend/`).
-- 🟡 **Division 1: API Seam Alignment & Contract Validation**
-  - Fix REST API mismatches between `client.js` and `encounter.py` endpoints (`/encounter/{token_number}/*`).
-- 🟡 **Division 2: Queue & Active Session Integration**
-  - Integrate `QueueRail.jsx` to fetch live queue data.
-  - Support token locking and status transitions via backend API.
-- 🟡 **Division 3: Encounter Execution & Dictation**
-  - Connect `DictationPanel.jsx` to submit transcription text to backend.
-  - Hook up the "Finish Consultation" button to trigger the LLM processing pipeline.
-- 🟡 **Division 4: Live Telemetry & SSE Visualizations**
-  - Wire `backend/events/bus.py` Server-Sent Events to frontend `XrayLog.jsx` and `ChecklistPanel.jsx`.
-- 🟡 **Division 5: E2E Verification & Record Display**
-  - Render finalized FHIR bundle dynamically in `RecordViewer.jsx`.
-  - Validate the end-to-end flow.
+- 🟡 **Queue UI and backend seam** (`frontend/src/components/QueueRail.jsx`):
+  - Left panel implemented with patient tokens, status chips (`waiting`, `in-progress`, `done`), token locking, live queue loading, safe status fallbacks, and a frontend-only draggable width handle bounded to 200–500px with localStorage persistence.
+  - Local demo flow is tested; live backend queue/token integration is not yet verified.
+- 🟡 **Dictation UI and backend seam** (`frontend/src/components/DictationPanel.jsx`):
+  - Center panel implemented with mic visualizer, cumulative local transcript, explicit local Edit/Done transcript controls, Discard reset, language selection, and "Finish Consultation" button.
+  - Local demo flow is tested; live backend finish-response behavior is not yet verified.
+- 🟡 **X-Ray and checklist UI** (`frontend/src/components/XrayLog.jsx`, `frontend/src/components/ChecklistPanel.jsx`):
+  - Permanent right-side security column combining:
+    - **`XrayLog.jsx`**: Terminal-style pipeline visualizer with redaction, validation, encryption, and ledger stages; optional SSE event ingestion is wired; scan log entries scroll internally.
+    - **`ChecklistPanel.jsx`**: Live ⬜➔✅ checklist for Symptoms, Diagnosis, Medication, and Advice below the X-Ray log.
+  - Local simulated pipeline is tested; live SSE/backend pipeline behavior is not yet verified.
+- 🟡 **`frontend/src/components/SyncBadge.jsx`**:
+  - Implemented connection/status badge for local demo, connecting, edge connected, edge unavailable, and offline states.
+  - Pending-count display is supported by the component interface, but it is not yet connected to a live sync-status payload.
+- 🟡 **`frontend/src/components/RecordViewer.jsx`**:
+  - Doctor-facing finalized-record modal, raw JSON inspector, accessibility behavior, and FHIR Bundle normalization are implemented and locally tested.
+  - Live backend FHIR response compatibility is not yet verified.
+- 🟡 **Verification:** Local interactive browser demo has been run from queue selection through simulated finalized record viewing; full live backend/offline sync demonstration remains pending.
 
 **Phase 7 implementation note:** The actual frontend uses Vite + React, not Next.js; there are no `pages/` or `app/` router files. The plan’s conceptual `QueueColumn`, `DictationColumn`, and `XRayChecklistColumn` are implemented as `QueueRail`, `DictationPanel`, `XrayLog`, and `ChecklistPanel`. The current workspace is a permanent three-column layout with a frontend-resizable queue column; the monitor is not a floating overlay. Backend mode is optional via `VITE_MEDSYNC_API_URL` and has not been live end-to-end tested.
-
-### ✅ Phase 6.75: Native Local GLiNER Two-Pass Pipeline
-- [x] **`backend/requirements.txt`**:
-  - Add `gliner`. Remove `spacy` to lower footprint (or keep if user specifies).
-- [x] **`backend/main.py`**:
-  - Load `gliner_small-v2.1` during the FastAPI `lifespan` startup event into memory to avoid latency during API calls.
-- [x] **`backend/pipeline/pii_mask.py`**:
-  - Deprecate `Presidio` + `spaCy` complex integration.
-  - **Pass 1 (Regex Sniper):** Use native Python `re` module to instantly redact ABHA IDs, Aadhaar numbers, Phone numbers, and PIN codes.
-  - **Pass 2 (GLiNER Net):** Pass text to the loaded GLiNER model with targets `["person", "symptom", "disease", "medication", "advice"]`. Redact "person", collect clinical concepts.
-- [x] **`backend/pipeline/checklist.py`**:
-  - Deprecate Cloud LLM API call for the live checklist.
-  - Import the cached GLiNER model.
-  - Run the checklist synchronously (or in a threadpool) returning `ChecklistState` based purely on locally extracted GLiNER labels.
-- [x] **`backend/routes/encounter.py`**:
-  - Update `append_transcript` and `finalize_encounter` to seamlessly use the new native functions.
 
 ---
 
@@ -251,7 +240,7 @@ frontend/
 
 1. **Step 1 (Reception Separation):** Open UI, show pre-seeded queue on the left. Explain: *"The receptionist handles identity. The doctor never sees the ABHA ID or Aadhaar number."*
 2. **Step 2 (Token Select):** Select *Token #01 (Priya Sharma)*. Show token status turn `in-progress`.
-3. **Step 3 (Live Dictation & Checklist):** Click mic or select the *Hypertension & Diabetes* demo note. As the note appears, show the right-side **Checklist Panel** ticking ⬜➔✅ in real time on pause, entirely driven by **offline GLiNER** on the edge node.
+3. **Step 3 (Live Dictation & Checklist):** Click mic or select the *Hypertension & Diabetes* demo note. Show the right-side **Checklist Panel** ticking ⬜➔✅ in real time on pause, entirely driven by **offline GLiNER** on the edge node.
 4. **Step 4 (Zero-Trust Pipeline Execution):** Click *Finish Consultation*.
 5. **Step 5 (The X-Ray Kill-Shot):** Watch the **X-Ray Panel** animate each step:
    - Pass 1 (Regex) redacts numbers; Pass 2 (GLiNER) redacts PII strings locally.

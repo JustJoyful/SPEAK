@@ -275,6 +275,7 @@ export default function App() {
       if (backendConfigured) {
         try {
           await medSyncApi.selectToken(token)
+          setStatuses((s) => ({ ...s, [token]: "in-progress" }))
         } catch (error) {
           const message = readableError(error, "Token selection failed")
           pushLog({
@@ -282,7 +283,11 @@ export default function App() {
             level: "warn",
             spans: [{ t: "text", v: `Token selection failed · ${message}` }],
           })
+          setSelectionBusy(null)
+          return
         }
+      } else {
+        setStatuses((s) => ({ ...s, [token]: "in-progress" }))
       }
       setActiveToken(token)
       resetCase(token)
