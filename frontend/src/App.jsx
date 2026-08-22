@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Moon, ShieldCheck, Stethoscope, Sun } from "lucide-react"
+import { Monitor, Moon, ShieldCheck, Stethoscope, Sun } from "lucide-react"
 import { QueueRail } from "@/components/QueueRail"
 import { DictationPanel } from "@/components/DictationPanel"
 import { XrayLog } from "@/components/XrayLog"
@@ -13,6 +13,25 @@ import { backendConfigured, medSyncApi } from "@/api/client"
 import { usePipelineStream } from "@/hooks/usePipelineStream"
 
 const EMPTY_CHECKS = { symptoms: "empty", diagnosis: "empty", medication: "empty", advice: "empty" }
+const QUEUE_WIDTH_KEY = "queueColumnWidth"
+const MIN_QUEUE_WIDTH = 200
+const MAX_QUEUE_WIDTH = 500
+
+function clampQueueWidth(width) {
+  return Math.min(MAX_QUEUE_WIDTH, Math.max(MIN_QUEUE_WIDTH, width))
+}
+
+function getInitialQueueWidth() {
+  const fallback = typeof window !== "undefined" && window.innerWidth >= 1280 ? 272 : 248
+  if (typeof window === "undefined") return fallback
+
+  try {
+    const stored = Number(window.localStorage.getItem(QUEUE_WIDTH_KEY))
+    return Number.isFinite(stored) ? clampQueueWidth(stored) : fallback
+  } catch {
+    return fallback
+  }
+}
 
 function readableError(error, fallback = "Unknown error") {
   if (error instanceof Error && error.message) return error.message
@@ -25,6 +44,8 @@ function readableError(error, fallback = "Unknown error") {
 
 export default function App() {
   const [theme, setTheme] = useState("light")
+  const [queueWidth, setQueueWidth] = useState(getInitialQueueWidth)
+  const [isQueueResizing, setIsQueueResizing] = useState(false)
   const [remoteCases, setRemoteCases] = useState(null)
   const [queueLoading, setQueueLoading] = useState(backendConfigured)
   const [queueError, setQueueError] = useState("")
@@ -48,9 +69,11 @@ export default function App() {
   const [seam, setSeam] = useState(false)
   const [record, setRecord] = useState(null)
   const [online, setOnline] = useState(() => typeof navigator !== "undefined" && navigator.onLine)
+  const [isMonitorVisible, setIsMonitorVisible] = useState(false)
 
   const timers = useRef([])
   const seq = useRef(0)
+  const queueResizeStart = useRef({ x: 0, width: queueWidth })
 
   const cases = useMemo(
     () => remoteCases
@@ -76,6 +99,40 @@ export default function App() {
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme)
   }, [theme])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(QUEUE_WIDTH_KEY, String(queueWidth))
+    } catch {
+      // Ignore unavailable browser storage; resizing still works for this session.
+    }
+  }, [queueWidth])
+
+  const handleQueueResizeStart = useCallback((event) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    queueResizeStart.current = { x: event.clientX, width: queueWidth }
+    setIsQueueResizing(true)
+  }, [queueWidth])
+
+  useEffect(() => {
+    if (!isQueueResizing) return undefined
+
+    const handleQueueResizeMove = (event) => {
+      const delta = event.clientX - queueResizeStart.current.x
+      setQueueWidth(clampQueueWidth(queueResizeStart.current.width + delta))
+    }
+    const stopQueueResize = () => setIsQueueResizing(false)
+
+    window.addEventListener("mousemove", handleQueueResizeMove)
+    window.addEventListener("mouseup", stopQueueResize)
+    window.addEventListener("blur", stopQueueResize)
+    return () => {
+      window.removeEventListener("mousemove", handleQueueResizeMove)
+      window.removeEventListener("mouseup", stopQueueResize)
+      window.removeEventListener("blur", stopQueueResize)
+    }
+  }, [isQueueResizing])
 
   const toggleTheme = useCallback(() => {
     setTheme((current) => current === "light" ? "dark" : "light")
@@ -450,6 +507,17 @@ export default function App() {
           </div>
           <button
             type="button"
+            onClick={() => setIsMonitorVisible((visible) => !visible)}
+            aria-controls="privacy-monitor"
+            aria-expanded={isMonitorVisible}
+            aria-label={isMonitorVisible ? "Hide privacy monitor" : "Show privacy monitor"}
+            title={isMonitorVisible ? "Hide privacy monitor" : "Show privacy monitor"}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-clinical-line bg-clinical text-clinical-muted transition-colors hover:bg-clinical-surface hover:text-clinical-ink"
+          >
+            <Monitor className="h-4 w-4" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
             onClick={toggleTheme}
             aria-pressed={theme === "dark"}
             aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
@@ -476,8 +544,23 @@ export default function App() {
         </div>
       )}
 
-      <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[248px_minmax(0,1fr)_13px_360px] xl:grid-cols-[272px_minmax(0,1fr)_13px_396px]">
-        <QueueRail cases={cases} activeToken={activeToken} onSelect={handleSelect} doneCount={doneCount} selectionBusy={selectionBusy} />
+      <main
+        className="relative grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[var(--queue-width)_minmax(0,1fr)]"
+        style={{ "--queue-width": `${queueWidth}px` }}
+      >
+        <div className="relative min-w-0">
+          <QueueRail cases={cases} activeToken={activeToken} onSelect={handleSelect} doneCount={doneCount} selectionBusy={selectionBusy} />
+          <button
+            type="button"
+            onMouseDown={handleQueueResizeStart}
+            aria-label="Resize queue column"
+            title="Resize queue column"
+            className={cn(
+              "absolute right-0 top-0 z-10 hidden h-full w-2 translate-x-1/2 cursor-col-resize border-0 bg-transparent transition-colors hover:bg-teal/20 lg:block",
+              isQueueResizing && "bg-teal/30",
+            )}
+          />
+        </div>
 
         <DictationPanel
           active={active}
@@ -494,39 +577,21 @@ export default function App() {
           onTranscriptEdit={handleTranscriptEdit}
         />
 
-        <div
-          className="relative hidden overflow-hidden bg-vault lg:block"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Zero-trust boundary between clinical zone and security zone"
-        >
-          <span aria-hidden="true" className="absolute inset-y-0 left-0 w-px bg-clinical-line" />
-          <span
-            aria-hidden="true"
-            className={cn(
-              "absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 transition-opacity duration-500",
-              seam ? "seam-flow opacity-100" : "opacity-0",
-            )}
-          />
-          <span
-            aria-hidden="true"
-            className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-vault-line"
-          />
-          <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 -rotate-90 whitespace-nowrap font-mono text-[0.5rem] uppercase tracking-[0.34em] text-vault-dim/80">
-            trust boundary
-          </span>
-        </div>
-
-        <aside className="flex min-h-0 flex-col border-t border-vault-line bg-vault text-vault-ink lg:border-t-0">
-          <XrayLog
-            lines={logs}
-            phase={phase}
-            busy={busy}
-            redactCount={redactCount}
-            egressClean={egressClean}
-          />
-          <ChecklistPanel active={active} state={checks} />
-        </aside>
+        {isMonitorVisible && (
+          <aside
+            id="privacy-monitor"
+            className="absolute inset-y-3 right-3 z-20 flex min-h-0 w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border border-vault-line bg-vault text-vault-ink shadow-2xl lg:w-[360px] xl:w-[396px]"
+          >
+            <XrayLog
+              lines={logs}
+              phase={phase}
+              busy={busy}
+              redactCount={redactCount}
+              egressClean={egressClean}
+            />
+            <ChecklistPanel active={active} state={checks} />
+          </aside>
+        )}
       </main>
       {finished && record && <RecordViewer record={record} isBackend={backendConfigured} onClose={() => setRecord(null)} />}
     </div>
