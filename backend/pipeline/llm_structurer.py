@@ -11,8 +11,8 @@ SYSTEM_PROMPT = """You are a medical AI assistant. Your task is to extract clini
 Ensure you map the extracted information to the following keys:
 - "chief_complaints": list of strings
 - "vitals": list of objects with "vital_name", "value", and optional "interpretation"
-- "diagnoses": list of objects with "clinical_status" (active/resolved/etc), "verification_status" (provisional/confirmed/etc), "code" (having "coding" and "text"), and optional "notes"
-- "medications": list of objects with "medication", "dosage" (having "timing", "duration", "route", "instructions"), and optional "reason"
+- "diagnoses": list of objects with "clinical_status" (active/resolved/etc), "verification_status" (provisional/confirmed/etc), "code" (having "coding" list and "text" string), and optional "notes"
+- "medications": list of objects with "medication" (having "coding" list and "text" string), "dosage" (having "timing", "duration", "route", "instructions"), and optional "reason"
 - "advice_and_followup": string or null
 
 Do NOT include any patient identifiable information like names, phone numbers, or ABHA IDs. Only include clinical data.

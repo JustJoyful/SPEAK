@@ -63,7 +63,7 @@ def test_append_transcript(mock_publish, mock_extract, mock_append):
     
     assert response.status_code == 200
     assert response.json()["status"] == "success"
-    mock_publish.assert_called_once_with(f"checklist_{token}", {"symptoms_present": True})
+    mock_publish.assert_any_call(f"checklist_{token}", {"symptoms_present": True})
 
 @patch("backend.routes.encounter.active_session.get_current_state")
 @patch("backend.routes.encounter.get_queue_entry_by_token")

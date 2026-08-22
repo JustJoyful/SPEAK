@@ -1,6 +1,6 @@
 import asyncio
 import json
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Body, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from typing import Dict, Any
 
@@ -34,7 +34,8 @@ async def append_transcript(token_number: int, data: Dict[str, str] = Body(...))
     # Run the lightweight checklist extraction pipeline
     checklist, error = await extract_checklist(cumulative_text)
     if not error and checklist:
-        # Publish checklist state to the global event bus for SSE
+        # Publish checklist state to the checklist SSE channel and the global event bus
+        await event_bus.publish(f"checklist_{token_number}", checklist.model_dump())
         await event_bus.publish("global", {"checklist": checklist.model_dump()})
         
     return {"status": "success", "cumulative_length": len(cumulative_text)}
@@ -53,6 +54,72 @@ async def stream_checklist(token_number: int):
             raise
     
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.websocket("/{token_number}/audio-stream")
+async def stream_audio(websocket: WebSocket, token_number: int):
+    await websocket.accept()
+    from backend.pipeline.stt import stt_engine
+    from backend.pipeline.pii_mask import mask_pii
+    import numpy as np
+    
+    buffer = b""
+    try:
+        while True:
+            data = await websocket.receive_bytes()
+            buffer += data
+            
+            # 16000 Hz, 16-bit PCM = 32000 bytes per second
+            # Process every 1 second of audio (32000 bytes)
+            if len(buffer) >= 32000:
+                # Ensure 16-bit int alignment (2 bytes per sample)
+                aligned_len = len(buffer) - (len(buffer) % 2)
+                chunk = buffer[:aligned_len]
+                buffer = buffer[aligned_len:]
+                
+                audio_np = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+                
+                # VAD detection
+                timestamps = stt_engine.get_speech_timestamps(audio_np)
+                
+                if timestamps:
+                    # Speech detected, transcribe segment
+                    text = stt_engine.transcribe_segment(audio_np)
+                    if text:
+                        # Append to global transcript
+                        active_session.append_transcript(token_number, text)
+                        
+                        # Trap C: Mask PII before sending back
+                        mask_result = mask_pii(text)
+                        
+                        # Also get checklist update
+                        cumulative = active_session.get_current_state(token_number).get("transcript", "")
+                        checklist, _ = await extract_checklist(cumulative)
+                        
+                        await websocket.send_json({
+                            "type": "TRANSCRIPT_CHUNK",
+                            "text": mask_result["sanitized_text"],
+                            "ui_toggles": checklist.model_dump() if checklist else {}
+                        })
+                
+    except WebSocketDisconnect:
+        try:
+            if len(buffer) >= 3200: # at least 0.1s
+                aligned_len = len(buffer) - (len(buffer) % 2)
+                chunk = buffer[:aligned_len]
+                audio_np = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+                if stt_engine.get_speech_timestamps(audio_np):
+                    text = stt_engine.transcribe_segment(audio_np)
+                    if text:
+                        active_session.append_transcript(token_number, text)
+                        mask_result = mask_pii(text)
+                        await websocket.send_json({
+                            "type": "TRANSCRIPT_CHUNK",
+                            "text": mask_result["sanitized_text"],
+                            "ui_toggles": {}
+                        })
+        except Exception:
+            pass
 
 @router.post("/{token_number}/finalize")
 async def finalize_encounter(token_number: int):

@@ -11,6 +11,8 @@ import { CASES, CHECKLIST_ORDER } from "@/lib/cases"
 import { buildPipeline, idleLines, makeRng } from "@/lib/pipeline"
 import { backendConfigured, medSyncApi } from "@/api/client"
 import { usePipelineStream } from "@/hooks/usePipelineStream"
+import { useAudioStreamer } from "@/hooks/useAudioStreamer"
+import { Bug } from "lucide-react"
 
 const EMPTY_CHECKS = { symptoms: "empty", diagnosis: "empty", medication: "empty", advice: "empty" }
 const QUEUE_WIDTH_KEY = "queueColumnWidth"
@@ -43,6 +45,7 @@ function readableError(error, fallback = "Unknown error") {
 
 export default function App() {
   const [theme, setTheme] = useState("light")
+  const [useMockData, setUseMockData] = useState(false)
   const [queueWidth, setQueueWidth] = useState(getInitialQueueWidth)
   const [isQueueResizing, setIsQueueResizing] = useState(false)
   const [remoteCases, setRemoteCases] = useState(null)
@@ -317,10 +320,30 @@ export default function App() {
     [activeToken, cases, resetCase, backendConfigured, pushLog],
   )
 
+
+  const handleWSTranscript = useCallback((newText) => {
+    setRawTranscript((prev) => {
+      const updated = prev ? prev + " " + newText : newText;
+      setWords(updated.trim() ? updated.trim().split(/\s+/) : []);
+      return updated;
+    });
+  }, []);
+
+  const handleWSToggles = useCallback((toggles) => {
+    setChecks((current) => ({ ...current, ...toggles }));
+  }, []);
+
+  const { startStreaming, stopStreaming, audioLevel } = useAudioStreamer(
+    activeToken,
+    handleWSTranscript,
+    handleWSToggles
+  );
+
   const scriptWords = useMemo(() => active.script.split(/\s+/), [active.script])
 
+
   useEffect(() => {
-    if (!recording) return
+    if (!recording || !useMockData) return
     let cancelled = false
     const rng = makeRng(active.token * 7919)
 
@@ -429,6 +452,7 @@ export default function App() {
     if (recording) {
       setRecording(false)
       setPhase("idle")
+      if (!useMockData) stopStreaming()
       pushLog({
         stage: "CAPTURE",
         level: "info",
@@ -438,6 +462,7 @@ export default function App() {
     }
     setRecording(true)
     setPhase("listening")
+    if (!useMockData) startStreaming()
     setStatuses((s) => ({ ...s, [activeToken]: "in-progress" }))
     pushLog({
       stage: "CAPTURE",
@@ -460,12 +485,13 @@ export default function App() {
     setFinishError("")
     setProcessing(true)
     setSeam(true)
+    if (!useMockData) stopStreaming()
     const transcript = words.join(" ")
 
     if (backendConfigured) {
       try {
         await medSyncApi.finishEncounter(activeToken, { text: transcript, language: "en-IN" })
-        // Do NOT setRecord here; it runs in the background. User can click "done" to fetch the record later.
+
         setProcessing(false)
         setFinished(true)
         setSeam(false)
@@ -512,7 +538,6 @@ export default function App() {
       setFinished(true)
       setSeam(false)
       setChecks({ symptoms: "checked", diagnosis: "checked", medication: "checked", advice: "checked" })
-      setRecord({ token: activeToken, fhir: active.fhir })
       setStatuses((s) => ({ ...s, [activeToken]: "done" }))
     }, t + 320)
   }, [words, processing, finished, active, activeToken, later, pushLog])
@@ -547,6 +572,22 @@ export default function App() {
               Zero-trust boundary active
             </span>
           </div>
+          <button
+            type="button"
+            onClick={() => setUseMockData((prev) => !prev)}
+            aria-pressed={useMockData}
+            aria-label="Toggle mock mode"
+            title="Toggle mock mode"
+            className={cn(
+              "flex h-8 items-center gap-1.5 rounded-md border px-2 text-xs font-medium transition-colors",
+              useMockData
+                ? "border-coral/30 bg-coral/10 text-coral"
+                : "border-clinical-line bg-clinical text-clinical-muted hover:bg-clinical-surface hover:text-clinical-ink"
+            )}
+          >
+            <Bug className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className="hidden sm:inline">Mock</span>
+          </button>
           <button
             type="button"
             onClick={toggleTheme}
@@ -600,6 +641,8 @@ export default function App() {
           recording={recording}
           finished={finished}
           processing={processing}
+          audioLevel={audioLevel}
+          useMockData={useMockData}
           elapsed={elapsed}
           onToggle={handleToggle}
           onFinish={handleFinish}

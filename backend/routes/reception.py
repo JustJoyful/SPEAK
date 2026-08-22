@@ -23,8 +23,8 @@ router = APIRouter(prefix="/queue", tags=["Reception & Queue"], dependencies=[De
 
 
 class EnqueuePatientRequest(BaseModel):
-    patient_display_name: str = Field(..., example="Priya Sharma")
-    raw_abha_id: str = Field(..., example="91-4820-9182-4412", description="Raw 14-digit ABHA ID or mobile number")
+    patient_display_name: str = Field(..., examples=["Priya Sharma"])
+    raw_abha_id: str = Field(..., examples=["91-4820-9182-4412"], description="Raw 14-digit ABHA ID or mobile number")
     clinic_id: str = Field(default="CLINIC-01")
 
 

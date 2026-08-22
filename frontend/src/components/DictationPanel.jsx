@@ -58,6 +58,8 @@ export function DictationPanel({
   onDiscard,
   onReset,
   onTranscriptEdit,
+  audioLevel,
+  useMockData
 }) {
   const scrollRef = useRef(null)
   const [editing, setEditing] = useState(false)
@@ -134,7 +136,16 @@ export function DictationPanel({
       </header>
 
       {/* mic focal point */}
-      <div className="flex flex-col items-center gap-4 border-b border-clinical-line px-6 py-7">
+      <div className="relative flex flex-col items-center gap-4 border-b border-clinical-line px-6 py-7">
+        {recording && !useMockData && (
+          <div className="absolute top-4 right-4 flex items-center gap-1.5 rounded-full bg-coral/10 px-2.5 py-1" aria-hidden="true">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-coral opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-coral"></span>
+            </span>
+            <span className="text-[0.65rem] font-medium text-coral uppercase tracking-wider">Mic working</span>
+          </div>
+        )}
         <div className="relative flex items-center justify-center">
           {/* orbit ring */}
           <span
@@ -179,11 +190,16 @@ export function DictationPanel({
               )}
               style={
                 recording
-                  ? {
-                      height: "100%",
-                      animation: `barLive ${b.dur}s ease-in-out ${b.delay}s infinite alternate`,
-                      transformOrigin: "center",
-                    }
+                  ? (useMockData 
+                     ? {
+                          height: "100%",
+                          animation: `barLive ${b.dur}s ease-in-out ${b.delay}s infinite alternate`,
+                          transformOrigin: "center",
+                        }
+                     : {
+                          height: `${Math.max(10, Math.min(100, 10 + ((audioLevel || 0) * (1 + b.base))))}%`,
+                          transition: "height 0.1s ease-out",
+                        })
                   : { height: `${6 + b.base * 5}px` }
               }
             />
