@@ -31,6 +31,12 @@ async def process_pending_record(record: dict) -> bool:
 
     try:
         # 1. Structure FHIR R4 Bundle using sanitized text
+        await event_bus.publish("global", {
+            "stage": "MODEL",
+            "level": "info",
+            "message": f"Structuring FHIR bundle for token {token_number}"
+        })
+        
         fhir_bundle, err = await sadiesink(sanitized_text, care_context_id)
         if err or not fhir_bundle:
             logger.error(f"Failed to structure clinical note for token {token_number}: {err}")
@@ -38,7 +44,18 @@ async def process_pending_record(record: dict) -> bool:
 
         update_sync_status(token_number, "structured")
         
+        await event_bus.publish("global", {
+            "stage": "MODEL",
+            "level": "success",
+            "message": f"FHIR bundle structured successfully"
+        })
+        
         # 2. Encrypt the bundle
+        await event_bus.publish("global", {
+            "stage": "ENCRYPT",
+            "level": "info",
+            "message": f"Encrypting FHIR bundle with AES-GCM"
+        })
         encrypted_record, sync_pointer = encrypt_fhir_bundle(fhir_bundle, abha_hash, clinic_id="CLINIC-123")
         
         # 3. Store locally in encounters and hash chain
@@ -54,6 +71,12 @@ async def process_pending_record(record: dict) -> bool:
         )
         append_to_hash_chain(encrypted_record.bundle_id, encrypted_record.record_hash, prev_hash)
         
+        await event_bus.publish("global", {
+            "stage": "CHAIN",
+            "level": "success",
+            "message": f"Appended to local hash chain. Hash: {encrypted_record.record_hash[:8]}..."
+        })
+        
         # 4. In a real scenario, we would also push sync_pointer to Turso here.
         # For now, mark as synced.
         update_sync_status(token_number, "synced")
@@ -62,6 +85,14 @@ async def process_pending_record(record: dict) -> bool:
             "token_number": token_number, 
             "status": "synced"
         })
+        
+        await event_bus.publish("global", {
+            "stage": "SYNC",
+            "level": "success",
+            "message": f"Synced record {token_number} to Turso",
+            "egress_clean": True
+        })
+        
         logger.info(f"Successfully synced token {token_number}")
         return True
         

@@ -34,8 +34,8 @@ async def append_transcript(token_number: int, data: Dict[str, str] = Body(...))
     # Run the lightweight checklist extraction pipeline
     checklist, error = await extract_checklist(cumulative_text)
     if not error and checklist:
-        # Publish checklist state to the event bus for SSE
-        await event_bus.publish(f"checklist_{token_number}", checklist.model_dump())
+        # Publish checklist state to the global event bus for SSE
+        await event_bus.publish("global", {"checklist": checklist.model_dump()})
         
     return {"status": "success", "cumulative_length": len(cumulative_text)}
 
@@ -74,6 +74,13 @@ async def finalize_encounter(token_number: int):
     if mask_result["pii_detected"]:
         event_bus.log_audit_event("PII_MASKED", f"Redacted entities: {mask_result['entity_counts']}", "System")
         
+    await event_bus.publish("global", {
+        "stage": "PII",
+        "level": "redact" if mask_result["pii_detected"] else "info",
+        "message": f"Masked {sum(mask_result['entity_counts'].values())} sensitive entities" if mask_result["pii_detected"] else "No sensitive entities found",
+        "redacted": mask_result["pii_detected"]
+    })
+        
     # Overwrite cumulative_transcript with sanitized text for offline storage
     from backend.db.local import update_session_transcript, update_sync_status
     update_session_transcript(token_number, sanitized_text, is_locked=False)
@@ -82,6 +89,12 @@ async def finalize_encounter(token_number: int):
     update_token_status(token_number, "done")
     update_sync_status(token_number, "pending_structuring")
     active_session.clear_session(token_number)
+    
+    await event_bus.publish("global", {
+        "stage": "QUEUE",
+        "level": "info",
+        "message": f"Session {token_number} moved to sync queue"
+    })
     
     event_bus.log_audit_event("FINALIZE_ENCOUNTER", f"Token {token_number} finalized locally, pending sync.", "Doctor")
     

@@ -7,6 +7,7 @@ from starlette.requests import Request
 from contextlib import asynccontextmanager
 from backend.routes.reception import router as reception_router
 from backend.routes.encounter import router as encounter_router
+from backend.routes.events import router as events_router
 from backend.db.local import init_db
 from backend.pipeline.sync_poller import start_sync_poller, stop_sync_poller
 
@@ -72,6 +73,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(reception_router)
 app.include_router(encounter_router)
+app.include_router(events_router)
 
 @app.get("/health")
 def health_check():
