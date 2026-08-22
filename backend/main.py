@@ -10,6 +10,8 @@ from backend.routes.encounter import router as encounter_router
 from backend.db.local import init_db
 from backend.pipeline.sync_poller import start_sync_poller, stop_sync_poller
 
+from backend.pipeline.pii_mask import global_pii_masker
+
 # Initialize database schema on startup
 init_db()
 
@@ -17,6 +19,8 @@ init_db()
 async def lifespan(app: FastAPI):
     # Start the background sync poller for offline store-and-forward
     start_sync_poller()
+    # Preload the GLiNER model for zero-latency inference
+    global_pii_masker.load_model()
     yield
     # Stop the poller on shutdown
     stop_sync_poller()

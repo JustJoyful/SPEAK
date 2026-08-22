@@ -234,16 +234,32 @@ frontend/
 
 **Phase 7 implementation note:** The actual frontend uses Vite + React, not Next.js; there are no `pages/` or `app/` router files. The plan’s conceptual `QueueColumn`, `DictationColumn`, and `XRayChecklistColumn` are implemented as `QueueRail`, `DictationPanel`, `XrayLog`, and `ChecklistPanel`. The current workspace is a permanent three-column layout with a frontend-resizable queue column; the monitor is not a floating overlay. Backend mode is optional via `VITE_MEDSYNC_API_URL` and has not been live end-to-end tested.
 
+### ✅ Phase 6.75: Native Local GLiNER Two-Pass Pipeline
+- [x] **`backend/requirements.txt`**:
+  - Add `gliner`. Remove `spacy` to lower footprint (or keep if user specifies).
+- [x] **`backend/main.py`**:
+  - Load `gliner_small-v2.1` during the FastAPI `lifespan` startup event into memory to avoid latency during API calls.
+- [x] **`backend/pipeline/pii_mask.py`**:
+  - Deprecate `Presidio` + `spaCy` complex integration.
+  - **Pass 1 (Regex Sniper):** Use native Python `re` module to instantly redact ABHA IDs, Aadhaar numbers, Phone numbers, and PIN codes.
+  - **Pass 2 (GLiNER Net):** Pass text to the loaded GLiNER model with targets `["person", "symptom", "disease", "medication", "advice"]`. Redact "person", collect clinical concepts.
+- [x] **`backend/pipeline/checklist.py`**:
+  - Deprecate Cloud LLM API call for the live checklist.
+  - Import the cached GLiNER model.
+  - Run the checklist synchronously (or in a threadpool) returning `ChecklistState` based purely on locally extracted GLiNER labels.
+- [x] **`backend/routes/encounter.py`**:
+  - Update `append_transcript` and `finalize_encounter` to seamlessly use the new native functions.
+
 ---
 
 ## 🏆 Demonstration Flow for Judges
 
 1. **Step 1 (Reception Separation):** Open UI, show pre-seeded queue on the left. Explain: *"The receptionist handles identity. The doctor never sees the ABHA ID or Aadhaar number."*
 2. **Step 2 (Token Select):** Select *Token #01 (Priya Sharma)*. Show token status turn `in-progress`.
-3. **Step 3 (Live Dictation & Checklist):** Click mic or select the *Hypertension & Diabetes* demo note. Show the right-side **Checklist Panel** ticking ⬜➔✅ in real time on pause.
+3. **Step 3 (Live Dictation & Checklist):** Click mic or select the *Hypertension & Diabetes* demo note. As the note appears, show the right-side **Checklist Panel** ticking ⬜➔✅ in real time on pause, entirely driven by **offline GLiNER** on the edge node.
 4. **Step 4 (Zero-Trust Pipeline Execution):** Click *Finish Consultation*.
 5. **Step 5 (The X-Ray Kill-Shot):** Watch the **X-Ray Panel** animate each step:
-   - PII strings (phone, names) redacted with visual strikethrough.
+   - Pass 1 (Regex) redacts numbers; Pass 2 (GLiNER) redacts PII strings locally.
    - Salted `CareContext` token injected.
    - Cloud LLM structures FHIR R4 JSON.
    - Pydantic verification badge turns green.
