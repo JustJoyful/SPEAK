@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ShieldCheck, Stethoscope } from "lucide-react"
+import { Moon, ShieldCheck, Stethoscope, Sun } from "lucide-react"
 import { QueueRail } from "@/components/QueueRail"
 import { DictationPanel } from "@/components/DictationPanel"
 import { XrayLog } from "@/components/XrayLog"
 import { ChecklistPanel } from "@/components/ChecklistPanel"
 import { RecordViewer } from "@/components/RecordViewer"
+import { SyncBadge } from "@/components/SyncBadge"
 import { cn } from "@/lib/utils"
 import { CASES, CHECKLIST_ORDER } from "@/lib/cases"
 import { buildPipeline, idleLines, makeRng } from "@/lib/pipeline"
@@ -23,6 +24,7 @@ function readableError(error, fallback = "Unknown error") {
 }
 
 export default function App() {
+  const [theme, setTheme] = useState("light")
   const [remoteCases, setRemoteCases] = useState(null)
   const [queueLoading, setQueueLoading] = useState(backendConfigured)
   const [queueError, setQueueError] = useState("")
@@ -45,6 +47,7 @@ export default function App() {
   const [egressClean, setEgressClean] = useState(false)
   const [seam, setSeam] = useState(false)
   const [record, setRecord] = useState(null)
+  const [online, setOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine)
 
   const timers = useRef([])
   const seq = useRef(0)
@@ -69,6 +72,25 @@ export default function App() {
   }, [])
 
   useEffect(() => clearTimers, [clearTimers])
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme)
+  }, [theme])
+
+  const toggleTheme = useCallback(() => {
+    setTheme((current) => current === "light" ? "dark" : "light")
+  }, [])
+
+  useEffect(() => {
+    const handleOnline = () => setOnline(true)
+    const handleOffline = () => setOnline(false)
+    window.addEventListener("online", handleOnline)
+    window.addEventListener("offline", handleOffline)
+    return () => {
+      window.removeEventListener("online", handleOnline)
+      window.removeEventListener("offline", handleOffline)
+    }
+  }, [])
 
   const pushLog = useCallback((l) => {
     seq.current += 1
@@ -383,8 +405,8 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen flex-col bg-clinical lg:h-screen lg:overflow-hidden">
-      <header className="flex shrink-0 items-center justify-between gap-4 border-b border-clinical-line bg-clinical-surface px-5 py-3 lg:px-6">
-        <div className="flex items-center gap-3">
+      <header className="grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-clinical-line bg-clinical-surface px-5 py-3 lg:px-6">
+        <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-8 w-8 items-center justify-center rounded-md bg-teal text-clinical-surface">
             <Stethoscope className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden="true" />
           </span>
@@ -398,11 +420,25 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 rounded-full border border-teal/20 bg-teal-soft px-3 py-1.5">
-          <ShieldCheck className="h-3.5 w-3.5 text-teal" strokeWidth={2.2} aria-hidden="true" />
-          <span className="text-[0.68rem] font-medium tracking-[0.01em] text-teal">
-            Zero-trust boundary active
-          </span>
+        <div className="justify-self-center">
+          <SyncBadge backendConfigured={backendConfigured} online={online} loading={queueLoading} error={queueError} />
+        </div>
+        <div className="flex min-w-0 items-center justify-self-end gap-2">
+          <div className="hidden items-center gap-2 rounded-full border border-teal/20 bg-teal-soft px-3 py-1.5 sm:flex">
+            <ShieldCheck className="h-3.5 w-3.5 text-teal" strokeWidth={2.2} aria-hidden="true" />
+            <span className="text-[0.68rem] font-medium tracking-[0.01em] text-teal">
+              Zero-trust boundary active
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={toggleTheme}
+            aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+            title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-clinical-line bg-clinical text-clinical-muted transition-colors hover:bg-clinical-surface hover:text-clinical-ink"
+          >
+            {theme === "light" ? <Moon className="h-4 w-4" aria-hidden="true" /> : <Sun className="h-4 w-4" aria-hidden="true" />}
+          </button>
         </div>
       </header>
 
