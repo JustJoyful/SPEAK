@@ -369,8 +369,10 @@ export default function App() {
       const mark = active.marks[k]
       if (words.length >= mark && !lastMark.current[k]) {
         lastMark.current[k] = true
-        setChecks((prev) => ({ ...prev, [k]: "filling" }))
-        later(() => setChecks((prev) => ({ ...prev, [k]: "checked" })), 620 + Math.random() * 500)
+        if (!backendConfigured) {
+          setChecks((prev) => ({ ...prev, [k]: "filling" }))
+          later(() => setChecks((prev) => ({ ...prev, [k]: "checked" })), 620 + Math.random() * 500)
+        }
         pushLog({
           stage: "EXTRACT",
           level: "info",
@@ -384,7 +386,23 @@ export default function App() {
         })
       }
     })
-  }, [words.length, active.marks, later, pushLog])
+  }, [words.length, active.marks, later, pushLog, backendConfigured])
+
+  // Debounced partial transcript upload to trigger edge pipeline (e.g. GLiNER checklist)
+  useEffect(() => {
+    if (!backendConfigured || !recording || !rawTranscript.trim()) return
+    const id = window.setTimeout(() => {
+      medSyncApi.processText(activeToken, { text: rawTranscript, language: "en-IN" })
+        .catch((err) => {
+          pushLog({
+            stage: "NETWORK",
+            level: "warn",
+            spans: [{ t: "text", v: `Partial sync failed · ${readableError(err)}` }],
+          })
+        })
+    }, 1500) // 1.5s debounce window for live dictation
+    return () => window.clearTimeout(id)
+  }, [backendConfigured, recording, rawTranscript, activeToken, pushLog])
 
   const handleToggle = useCallback(() => {
     if (recording) {
