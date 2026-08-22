@@ -16,7 +16,7 @@ export function SyncBadge({ backendConfigured, online, loading, error, pendingCo
       : isError
         ? "Edge unavailable"
         : pending
-          ? `${pending} pending sync`
+          ? `${pending} pending sync${pending === 1 ? "" : "s"}`
           : online
             ? "Edge connected"
             : "Offline"
