@@ -2,7 +2,7 @@
 
 **Project:** ABDM-Compliant Zero-Trust Health Record Pipeline  
 **Target:** Smart India Hackathon (SIH) 2026  
-**Architecture:** React + Vite (2-Column Frontend with Floating Monitor) · FastAPI + Pydantic (Edge Node) · SQLite (Local Edge DB) · Turso (Central Index)
+**Architecture:** React + Vite (3-Column Frontend with Resizable Queue) · FastAPI + Pydantic (Edge Node) · SQLite (Local Edge DB) · Turso (Central Index)
 **Status:** `medsyncplan.md` is superseded by this document.
 
 ---
@@ -94,11 +94,11 @@ backend/
 
 frontend/
   src/
-    App.jsx                    # 2-Column main layout + floating monitor state
+    App.jsx                    # 3-Column main layout and workflow state
     components/
       QueueRail.jsx             # Left: Live queue, token selection, token locking, status badges
       DictationPanel.jsx        # Middle: Mic visualizer, cumulative transcript, editing, Discard, Finish
-      XrayLog.jsx               # Floating monitor pipeline telemetry with error indicators
+      XrayLog.jsx               # Right-column pipeline telemetry with error indicators
       ChecklistPanel.jsx       # Passive ⬜→✅ live boolean checklist
       RecordViewer.jsx         # Doctor's view of finalized NRCeS FHIR record with decrypted patient context
     hooks/
@@ -211,7 +211,7 @@ frontend/
 
 ---
 
-### ⏳ Phase 7: 2-Column React + Vite Frontend with Floating Monitor & Hero Visualizers
+### ⏳ Phase 7: 3-Column React + Vite Frontend & Hero Visualizers
 - [x] **Scaffold React + Vite application** (`frontend/`).
 - 🟡 **Queue UI and backend seam** (`frontend/src/components/QueueRail.jsx`):
   - Left panel implemented with patient tokens, status chips (`waiting`, `in-progress`, `done`), token locking, live queue loading, safe status fallbacks, and a frontend-only draggable width handle bounded to 200–500px with localStorage persistence.
@@ -220,10 +220,9 @@ frontend/
   - Center panel implemented with mic visualizer, cumulative local transcript, explicit local Edit/Done transcript controls, Discard reset, language selection, and "Finish Consultation" button.
   - Local demo flow is tested; live backend finish-response behavior is not yet verified.
 - 🟡 **X-Ray and checklist UI** (`frontend/src/components/XrayLog.jsx`, `frontend/src/components/ChecklistPanel.jsx`):
-  - The monitor is rendered as an optional floating overlay rather than a permanent grid column. It is hidden by default and controlled by a shared header/close toggle.
-    - **`XrayLog.jsx`**: Terminal-style pipeline visualizer with redaction, validation, encryption, and ledger stages; optional SSE event ingestion is wired; the containing monitor can be dragged, resized, and internally split from the checklist.
-    - **`ChecklistPanel.jsx`**: Live ⬜➔✅ checklist for Symptoms, Diagnosis, Medication, and Advice; occupies the adjustable lower section of the monitor.
-  - Monitor positioning, outer dimensions, and the 60/40 X-Ray/checklist split are frontend session state; monitor position, size, and split reset on close/reopen.
+  - Permanent right-side security column combining:
+    - **`XrayLog.jsx`**: Terminal-style pipeline visualizer with redaction, validation, encryption, and ledger stages; optional SSE event ingestion is wired; scan log entries scroll internally.
+    - **`ChecklistPanel.jsx`**: Live ⬜➔✅ checklist for Symptoms, Diagnosis, Medication, and Advice below the X-Ray log.
   - Local simulated pipeline is tested; live SSE/backend pipeline behavior is not yet verified.
 - 🟡 **`frontend/src/components/SyncBadge.jsx`**:
   - Implemented connection/status badge for local demo, connecting, edge connected, edge unavailable, and offline states.
@@ -233,7 +232,7 @@ frontend/
   - Live backend FHIR response compatibility is not yet verified.
 - 🟡 **Verification:** Local interactive browser demo has been run from queue selection through simulated finalized record viewing; full live backend/offline sync demonstration remains pending.
 
-**Phase 7 implementation note:** The actual frontend uses Vite + React, not Next.js; there are no `pages/` or `app/` router files. The plan’s conceptual `QueueColumn`, `DictationColumn`, and `XRayChecklistColumn` are implemented as `QueueRail`, `DictationPanel`, `XrayLog`, and `ChecklistPanel`. The current workspace is a two-column queue/dictation layout with an optional floating monitor overlay; it is not a permanent three-column layout. Backend mode is optional via `VITE_MEDSYNC_API_URL` and has not been live end-to-end tested.
+**Phase 7 implementation note:** The actual frontend uses Vite + React, not Next.js; there are no `pages/` or `app/` router files. The plan’s conceptual `QueueColumn`, `DictationColumn`, and `XRayChecklistColumn` are implemented as `QueueRail`, `DictationPanel`, `XrayLog`, and `ChecklistPanel`. The current workspace is a permanent three-column layout with a frontend-resizable queue column; the monitor is not a floating overlay. Backend mode is optional via `VITE_MEDSYNC_API_URL` and has not been live end-to-end tested.
 
 ---
 
@@ -241,7 +240,7 @@ frontend/
 
 1. **Step 1 (Reception Separation):** Open UI, show pre-seeded queue on the left. Explain: *"The receptionist handles identity. The doctor never sees the ABHA ID or Aadhaar number."*
 2. **Step 2 (Token Select):** Select *Token #01 (Priya Sharma)*. Show token status turn `in-progress`.
-3. **Step 3 (Live Dictation & Checklist):** Click mic or select the *Hypertension & Diabetes* demo note. Open the floating **Monitor** from the header to show the **Checklist Panel** ticking ⬜➔✅ in real time on pause.
+3. **Step 3 (Live Dictation & Checklist):** Click mic or select the *Hypertension & Diabetes* demo note. Show the right-side **Checklist Panel** ticking ⬜➔✅ in real time on pause.
 4. **Step 4 (Zero-Trust Pipeline Execution):** Click *Finish Consultation*.
 5. **Step 5 (The X-Ray Kill-Shot):** Watch the **X-Ray Panel** animate each step:
    - PII strings (phone, names) redacted with visual strikethrough.
