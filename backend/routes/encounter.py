@@ -87,6 +87,7 @@ async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
     MAX_SPEECH_SAMPLES = int(3.5 * SAMPLE_RATE)    # Max 3.5s phrase before auto-transcribing
     PAUSE_SILENCE_SAMPLES = int(0.4 * SAMPLE_RATE) # 400ms pause triggers sentence boundary
     SLICE_BYTES = 8000                             # 250ms audio slice (4000 samples)
+    RMS_SPEECH_FLOOR = 0.008                       # Must match stt.py _RMS_FLOOR — filters AC hum
 
     # Look up patient context to condition Whisper decoder for high phonetic accuracy
     entry = get_queue_entry_by_token(token_number)
@@ -106,7 +107,7 @@ async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
 
                 chunk_np = np.frombuffer(slice_data, dtype=np.int16).astype(np.float32) / 32768.0
                 rms = float(np.sqrt(np.mean(chunk_np ** 2)))
-                is_speech = rms >= 0.0025
+                is_speech = rms >= RMS_SPEECH_FLOOR
 
                 should_transcribe = False
                 if is_speech:

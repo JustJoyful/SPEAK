@@ -1,26 +1,30 @@
 #!/usr/bin/env bash
 # ==============================================================================
 #  MedSync: Zero-Trust Edge Gateway for ABDM Outpatient Consultations
-#  Automated Startup & Judge Demonstration Orchestrator
+#  Live Process & Resource Terminal Dashboard
 # ==============================================================================
 
-set -m # Enable job control to manage process groups cleanly
+set -m # Enable job control
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# ANSI Color Palette
+# ANSI Color Palette & Styling
 BOLD='\033[1m'
 DIM='\033[2m'
-CYAN='\033[38;2;45;212;191m'      # MedSync Teal
-BLUE='\033[38;2;96;165;250m'      # Vault Blue
-GREEN='\033[38;2;52;211;153m'     # Verified Green
-YELLOW='\033[38;2;251;191;36m'    # Alert Yellow
-PURPLE='\033[38;2;192;132;252m'   # Crypto Purple
+CYAN='\033[38;2;45;212;191m'      # MedSync Teal (#2DD4BF)
+BLUE='\033[38;2;96;165;250m'      # Vault Blue (#60A5FA)
+GREEN='\033[38;2;52;211;153m'     # Verified Green (#34D399)
+YELLOW='\033[38;2;251;191;36m'    # Alert Yellow (#FBBF24)
+PURPLE='\033[38;2;192;132;252m'   # Crypto Purple (#C084FC)
+RED='\033[38;2;248;113;113m'      # Error Red (#F87171)
 NC='\033[0m'                      # Reset
 
-clear 2>/dev/null || true
+LOG_BACKEND="$SCRIPT_DIR/.backend.log"
+LOG_FRONTEND="$SCRIPT_DIR/.frontend.log"
 
+# ── Clean Pre-flight ──────────────────────────────────────────────────────────
+clear 2>/dev/null || true
 echo -e "${CYAN}${BOLD}"
 cat << "EOF"
   __  __          _  ____                   
@@ -29,38 +33,28 @@ cat << "EOF"
  | |  | |  __/ (_| | ___) | |_| | | | | (__ 
  |_|  |_|\___|\__,_||____/ \__, |_| |_|\___|
                            |___/            
- Zero-Trust ABDM Edge Architecture · Hackathon Demo
+ Zero-Trust ABDM Edge Node · Live Process Dashboard
 EOF
 echo -e "${NC}"
 
-echo -e "${DIM}──────────────────────────────────────────────────────────────────────────────${NC}"
-echo -e "${BOLD} 🛡️  SECURITY & ARCHITECTURAL HIGHLIGHTS FOR JUDGES${NC}"
-echo -e "   ${CYAN}•${NC} ${BOLD}On-Device ASR:${NC}        faster-whisper + Silero VAD (0 audio leaves hardware)"
-echo -e "   ${BLUE}•${NC} ${BOLD}Zero-Trust Scrub:${NC}     Local regex + GLiNER PII masking prior to cloud LLM"
-echo -e "   ${PURPLE}•${NC} ${BOLD}NRCeS FHIR R4:${NC}        Standardized OP-Consultation schema validation"
-echo -e "   ${GREEN}•${NC} ${BOLD}Encrypted Ledger:${NC}     AES-256-GCM sealed envelopes + local hash chaining"
-echo -e "   ${YELLOW}•${NC} ${BOLD}Store & Forward:${NC}      Full offline autonomy with auto-sync poller"
-echo -e "${DIM}──────────────────────────────────────────────────────────────────────────────${NC}"
-echo ""
-
-# ── Clean Existing Ports ──────────────────────────────────────────────────────
-echo -e "${DIM}[*] Pre-flight: Clearing ports 8000, 5173, 3000...${NC}"
+echo -e "${DIM}[*] Initializing edge environment & freeing ports (8000, 5173)...${NC}"
 fuser -k 8000/tcp 2>/dev/null || true
 fuser -k 5173/tcp 2>/dev/null || true
 fuser -k 3000/tcp 2>/dev/null || true
 fuser -k 3001/tcp 2>/dev/null || true
-sleep 0.4
+rm -f "$LOG_BACKEND" "$LOG_FRONTEND"
+sleep 0.3
 
-# ── Start Backend ─────────────────────────────────────────────────────────────
-echo -e "${BLUE}[1/2] Launching FastAPI Zero-Trust Backend (port 8000)...${NC}"
-PYTHONPATH="$SCRIPT_DIR" \
+# ── Launch Backend ────────────────────────────────────────────────────────────
+echo -e "${BLUE}[1/2] Starting FastAPI Zero-Trust Backend (port 8000)...${NC}"
+PYTHONUNBUFFERED=1 PYTHONPATH="$SCRIPT_DIR" \
   "$SCRIPT_DIR/.venv/bin/python" -m uvicorn backend.main:app \
   --host 0.0.0.0 --port 8000 \
-  --log-level warning > /dev/null 2>&1 &
+  --log-level info > "$LOG_BACKEND" 2>&1 &
 BACKEND_PID=$!
 
 # Wait for backend readiness
-printf "      ${DIM}Initializing models & SQLite enclave...${NC} "
+printf "      ${DIM}Booting faster-whisper ASR & SQLite enclave...${NC} "
 READY=0
 for i in $(seq 1 35); do
   if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
@@ -75,62 +69,104 @@ echo ""
 if [ $READY -eq 1 ]; then
   echo -e "      ${GREEN}✓ Backend online and healthy!${NC}"
 else
-  echo -e "      ${YELLOW}! Backend taking longer than usual, proceeding...${NC}"
+  echo -e "      ${YELLOW}! Backend startup delayed, proceeding with dashboard...${NC}"
 fi
 
-# ── Start Frontend ────────────────────────────────────────────────────────────
-echo -e "${CYAN}[2/2] Launching React Vite Clinical Interface...${NC}"
+# ── Launch Frontend ───────────────────────────────────────────────────────────
+echo -e "${CYAN}[2/2] Starting React Vite Clinical Interface (port 5173)...${NC}"
 cd "$SCRIPT_DIR/frontend"
-npm run dev > /dev/null 2>&1 &
+npm run dev > "$LOG_FRONTEND" 2>&1 &
 FRONTEND_PID=$!
 cd "$SCRIPT_DIR"
 sleep 0.8
 echo -e "      ${GREEN}✓ Frontend dev server ready!${NC}"
-
-echo ""
-echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║${NC}  ${BOLD}🚀 MedSync is Live & Ready for Demonstration${NC}                             ${CYAN}║${NC}"
-echo -e "${CYAN}╠════════════════════════════════════════════════════════════════════════════╣${NC}"
-echo -e "${CYAN}║${NC}  ${BOLD}🖥️  Doctor Desk UI:${NC}    ${GREEN}http://localhost:5173${NC} (or http://localhost:3000)   ${CYAN}║${NC}"
-echo -e "${CYAN}║${NC}  ${BOLD}🔌 API Gateway:${NC}        ${BLUE}http://localhost:8000${NC}                                   ${CYAN}║${NC}"
-echo -e "${CYAN}║${NC}  ${BOLD}📖 Interactive Docs:${NC}   ${PURPLE}http://localhost:8000/docs${NC}                              ${CYAN}║${NC}"
-echo -e "${CYAN}║${NC}  ${BOLD}🩺 Health / Enclave:${NC}   ${YELLOW}http://localhost:8000/health${NC}                            ${CYAN}║${NC}"
-echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
-echo ""
-
-echo -e "${BOLD}🎯 JUDGE DEMO FLOW SUGGESTION (2-MINUTE PITCH):${NC}"
-echo -e "  ${BOLD}1. Patient Selection:${NC} Click patient in left queue (ABHA ID anonymized with HMAC-SHA256)."
-echo -e "  ${BOLD}2. Real-Time Dictation:${NC} Click Mic to speak (or toggle 'Mock Data' for instant simulation)."
-echo -e "  ${BOLD}3. Privacy X-Ray:${NC} Observe the real-time split screen — clinical vs security zone."
-echo -e "  ${BOLD}4. Finalize & Seal:${NC} Click 'Finish Consultation' to review NRCeS FHIR R4 clinical record."
-echo ""
-echo -e "${DIM}Press ${BOLD}Ctrl+C${DIM} at any time to instantly stop both services.${NC}"
-echo -e "${DIM}──────────────────────────────────────────────────────────────────────────────${NC}"
+sleep 0.5
 
 # ── Instant Shutdown Handler ──────────────────────────────────────────────────
 cleanup() {
-  # Disable trap to avoid double triggers
   trap - INT TERM EXIT
   echo ""
-  echo -e "${YELLOW}[*] Shutting down MedSync instances immediately...${NC}"
-
-  # Kill process groups and PIDs without waiting
+  echo -e "${YELLOW}[*] Shutting down MedSync edge processes cleanly...${NC}"
   kill -9 -$BACKEND_PID $BACKEND_PID 2>/dev/null || true
   kill -9 -$FRONTEND_PID $FRONTEND_PID 2>/dev/null || true
-  
-  # Ensure ports are freed instantly
   fuser -k 8000/tcp 2>/dev/null || true
   fuser -k 5173/tcp 2>/dev/null || true
   fuser -k 3000/tcp 2>/dev/null || true
   fuser -k 3001/tcp 2>/dev/null || true
-
-  echo -e "${GREEN}✓ All services stopped.${NC}"
+  rm -f "$LOG_BACKEND" "$LOG_FRONTEND"
+  echo -e "${GREEN}✓ All processes stopped and ports released.${NC}"
   exit 0
 }
-
 trap cleanup INT TERM EXIT
 
-# Wait indefinitely for signal
+# ── Live Monitoring Dashboard Loop ────────────────────────────────────────────
+START_TIME=$(date +%s)
+
 while true; do
-  sleep 1
+  sleep 1.5
+
+  NOW=$(date +%s)
+  ELAPSED=$((NOW - START_TIME))
+  ELAPSED_FMT=$(printf "%02d:%02d:%02d" $((ELAPSED/3600)) $(( (ELAPSED%3600)/60 )) $((ELAPSED%60)))
+  TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
+
+  # Health check status
+  if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+    B_STATUS="${GREEN}ONLINE${NC}  (Port 8000)"
+  else
+    B_STATUS="${RED}OFFLINE${NC}"
+  fi
+
+  if nc -z 127.0.0.1 5173 2>/dev/null || nc -z 127.0.0.1 3000 2>/dev/null; then
+    F_STATUS="${GREEN}ONLINE${NC}  (Port 5173)"
+  else
+    F_STATUS="${YELLOW}STARTING${NC}"
+  fi
+
+  # Redraw without flicker
+  tput cup 0 0 2>/dev/null || clear
+
+  echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║${NC}  ${BOLD}🛡️  MEDSYNC ZERO-TRUST EDGE GATEWAY · LIVE DASHBOARD${NC}                            ${CYAN}║${NC}"
+  echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════════════════╣${NC}"
+  echo -e "${CYAN}║${NC}  ${BOLD}Node Time:${NC} ${TIMESTAMP}   │  ${BOLD}Uptime:${NC} ${ELAPSED_FMT}                              ${CYAN}║${NC}"
+  echo -e "${CYAN}║${NC}  ${BOLD}Doctor Desk:${NC} ${GREEN}http://localhost:5173${NC}    │  ${BOLD}API Gateway:${NC} ${BLUE}http://localhost:8000${NC}       ${CYAN}║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+
+  # ── Service Status ──────────────────────────────────────────────────────────
+  echo -e "${BOLD}🟢 SERVICE STATUS${NC}"
+  echo -e "${DIM}────────────────────────────────────────────────────────────────────────────────────────────${NC}"
+  printf "  ${BOLD}%-30s${NC}  PID %-8s  %b\n" "FastAPI Gateway + ASR" "$BACKEND_PID"  "$B_STATUS"
+  printf "  ${BOLD}%-30s${NC}  PID %-8s  %b\n" "Vite Clinical UI"      "$FRONTEND_PID" "$F_STATUS"
+  echo -e "${DIM}────────────────────────────────────────────────────────────────────────────────────────────${NC}"
+  echo ""
+
+  # ── Pipeline Architecture ───────────────────────────────────────────────────
+  echo -e "${BOLD}⚙️  EDGE PIPELINE ARCHITECTURE${NC}"
+  echo -e "   ${CYAN}•${NC} ${BOLD}On-Device ASR:${NC}       faster-whisper (small.en, int8_float16) + Silero VAD"
+  echo -e "   ${BLUE}•${NC} ${BOLD}Zero-Trust Privacy:${NC}  Regex + GLiNER scrub prior to any egress"
+  echo -e "   ${PURPLE}•${NC} ${BOLD}Local Cryptography:${NC}  AES-256-GCM sealed envelopes · SQLite WAL ledger"
+  echo -e "   ${GREEN}•${NC} ${BOLD}ABDM FHIR R4:${NC}        Standardized OP-Consultation Bundle generator"
+  echo ""
+
+  # ── Live Backend Activity Stream ───────────────────────────────────────────
+  echo -e "${BOLD}📜 LIVE BACKEND LOG (last 8 events)${NC}"
+  echo -e "${DIM}────────────────────────────────────────────────────────────────────────────────────────────${NC}"
+  if [ -f "$LOG_BACKEND" ]; then
+    tail -n 8 "$LOG_BACKEND" | while IFS= read -r line; do
+      if [[ "$line" =~ "ERROR" ]] || [[ "$line" =~ "error" ]]; then
+        echo -e "  ${RED}✖ ${line}${NC}"
+      elif [[ "$line" =~ "POST" ]] || [[ "$line" =~ "GET" ]] || [[ "$line" =~ "WS" ]] || [[ "$line" =~ "200" ]] || [[ "$line" =~ "101" ]]; then
+        echo -e "  ${GREEN}▸ ${line}${NC}"
+      else
+        echo -e "  ${DIM}• ${line}${NC}"
+      fi
+    done
+  else
+    echo -e "  ${DIM}Awaiting backend logs...${NC}"
+  fi
+  echo -e "${DIM}────────────────────────────────────────────────────────────────────────────────────────────${NC}"
+  echo -e "${DIM}Press ${BOLD}Ctrl+C${DIM} to stop all services and free ports.${NC}"
+
 done
