@@ -73,12 +73,17 @@ async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
         return
     await websocket.accept()
 
-    from backend.pipeline.stt import get_stt_engine
-    from backend.pipeline.pii_mask import mask_pii
+    from backend.pipeline.stt import get_stt_engine, build_clinical_prompt
     import numpy as np
 
     stt = get_stt_engine()  # lazy singleton — model loads on first WS connection
     buffer = b""
+
+    # Look up patient context to condition Whisper decoder for high phonetic accuracy
+    entry = get_queue_entry_by_token(token_number)
+    patient_name = entry.get("patient_display_name", "") if entry else ""
+    complaint = entry.get("chief_complaint", "") if entry else ""
+    clinical_prompt = build_clinical_prompt(patient_name, complaint)
 
     try:
         while True:
@@ -93,10 +98,13 @@ async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
 
                 audio_np = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
 
-                if not stt.has_speech(audio_np):
-                    continue  # Silence — skip Whisper, avoid hallucinations
+                # Offload Silero VAD to thread pool to prevent blocking asyncio loop
+                has_voice = await asyncio.to_thread(stt.has_speech, audio_np)
+                if not has_voice:
+                    continue  # Silence or fan noise — skip Whisper, save CPU
 
-                text = stt.transcribe_segment(audio_np)
+                # Offload Whisper inference to thread pool with Indian clinical prompt
+                text = await asyncio.to_thread(stt.transcribe_segment, audio_np, clinical_prompt)
                 if not text:
                     continue
 
@@ -126,8 +134,9 @@ async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
             if len(buffer) >= 3200:  # at least 0.1 s
                 aligned_len = len(buffer) - (len(buffer) % 2)
                 audio_np = np.frombuffer(buffer[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
-                if stt.has_speech(audio_np):
-                    text = stt.transcribe_segment(audio_np)
+                has_voice = await asyncio.to_thread(stt.has_speech, audio_np)
+                if has_voice:
+                    text = await asyncio.to_thread(stt.transcribe_segment, audio_np, clinical_prompt)
                     if text:
                         active_session.append_transcript(token_number, text)
         except Exception:  # noqa: BLE001
