@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from backend.routes.reception import router as reception_router
 from backend.routes.encounter import router as encounter_router
 from backend.routes.events import router as events_router
-from backend.db.local import init_db
+from backend.db.local import init_db, ensure_seeded_db
 from backend.pipeline.sync_poller import start_sync_poller, stop_sync_poller
 
 # Initialize database schema on startup
@@ -18,6 +18,9 @@ init_db()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Ensure database tables exist and are idempotently seeded with demo patients
+    init_db()
+    ensure_seeded_db()
     # Start the background sync poller for offline store-and-forward
     start_sync_poller()
     # NOTE: Models (GLiNER, Whisper, Silero VAD) are loaded lazily on first use.

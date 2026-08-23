@@ -165,15 +165,20 @@ export default function App() {
         const next = rows.map((row) => {
           const token = Number(row.token_number ?? row.token)
           if (!Number.isFinite(token) || token <= 0) return null
-          const demo = CASES.find((c) => c.token === token) ?? CASES[0]
+          const demo = CASES.find((c) => c.token === token) ?? {}
           return {
             ...demo,
             ...row,
             token,
-            name: row.patient_display_name ?? row.name ?? demo.name,
-            status: row.status ?? demo.status,
-            script: demo.script,
-            marks: demo.marks,
+            name: row.patient_display_name ?? row.name ?? demo.name ?? `Token ${token}`,
+            status: row.status ?? demo.status ?? "waiting",
+            age: row.age ?? demo.age,
+            sex: row.sex ?? demo.sex,
+            complaint: row.complaint ?? row.chief_complaint ?? demo.complaint ?? "",
+            script: row.script ?? demo.script ?? "",
+            marks: row.marks ?? demo.marks ?? {},
+            pii: row.pii ?? demo.pii ?? [],
+            fhir: row.fhir ?? demo.fhir ?? null,
           }
         }).filter(Boolean)
         if (next.length) {
