@@ -377,7 +377,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [recording, scriptWords, active.token])
+  }, [recording, scriptWords, active.token, useMockData])
 
   useEffect(() => {
     if (!recording) return
