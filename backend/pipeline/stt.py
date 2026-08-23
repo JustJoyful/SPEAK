@@ -24,26 +24,20 @@ _COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 _CPU_THREADS = int(os.getenv("WHISPER_CPU_THREADS", "4"))
 
 DEFAULT_INDIAN_CLINICAL_PROMPT = (
-    "Doctor in India dictating OP clinical consultation: Patient presents with fever, chills, "
-    "cough, headache, body ache, chest pain, diabetes, hypertension. Vitals: BP 120/80 mmHg, "
-    "Pulse 72 bpm, SpO2 98%, Temp 101.4 F, RBS 168 mg/dL. Rx: Dolo 650, Paracetamol 650mg TDS, "
-    "Metformin 1000mg BD, Amlodipine 5mg OD, Pantocid 40mg, Augmentin 625mg, Azithromycin 500mg, "
-    "Salbutamol inhaler 2 puffs PRN, Budesonide 100mcg BD, Pregabalin 75mg HS, ORS sachets ad lib. "
-    "Investigations: CBC, Dengue NS1, HbA1c, Serum Creatinine, ECG, Urine routine. "
-    "Contact: +91 9876543210. Aadhaar: 2345 6789 0123. Location: PHC Kolar, Ward 4."
+    "Clinical consultation notes in Indian English. Patient vitals: BP 120/80, pulse 72, SpO2 98. "
+    "Prescription: Dolo 650, Paracetamol, Metformin, Amlodipine, Pantocid, Augmentin, Azithromycin, Cetirizine."
 )
 
 
 def build_clinical_prompt(patient_name: str = "", complaint: str = "") -> str:
-    """Builds dynamic initial_prompt conditioned on active patient context."""
-    prefix_parts = []
+    """Builds concise dynamic initial_prompt conditioned on active patient context."""
+    parts = []
     if patient_name and patient_name.strip():
-        prefix_parts.append(f"Patient: {patient_name.strip()}.")
+        parts.append(f"Patient: {patient_name.strip()}.")
     if complaint and complaint.strip():
-        prefix_parts.append(f"Chief Complaint: {complaint.strip()}.")
-    if prefix_parts:
-        return f"{' '.join(prefix_parts)} {DEFAULT_INDIAN_CLINICAL_PROMPT}"
-    return DEFAULT_INDIAN_CLINICAL_PROMPT
+        parts.append(f"Chief complaint: {complaint.strip()}.")
+    parts.append(DEFAULT_INDIAN_CLINICAL_PROMPT)
+    return " ".join(parts)
 
 
 class RealtimeSTT:
@@ -66,12 +60,12 @@ class RealtimeSTT:
             compute_type=compute_type,
             cpu_threads=cpu_threads
         )
-        # Tuned Silero VAD options for noisy PHC clinic environments
-        self.vad_options = VadOptions(
-            threshold=0.5,
-            min_speech_duration_ms=250,
-            min_silence_duration_ms=800,
-            speech_pad_ms=300
+        # Sane VAD parameters for continuous live clinical audio streaming
+        self.vad_parameters = dict(
+            threshold=0.35,
+            min_speech_duration_ms=120,
+            min_silence_duration_ms=400,
+            speech_pad_ms=200
         )
         logger.info("STT pipeline ready for Indian clinical dictation.")
 
@@ -84,15 +78,17 @@ class RealtimeSTT:
         Run faster-whisper on a Float32 NumPy array at 16 000 Hz mono.
         Returns the stripped transcript string, or "" for silence/noise.
         """
-        if audio_np.size == 0:
+        if audio_np.size == 0 or not self.has_speech(audio_np):
             return ""
 
         prompt = initial_prompt or DEFAULT_INDIAN_CLINICAL_PROMPT
 
         segments, _info = self.model.transcribe(
             audio_np,
-            vad_filter=False,  # We apply Silero VAD before calling transcribe
-            beam_size=1,       # Greedy decoding for real-time responsiveness
+            language="en",     # Enforce English decoding (prevents misidentifying Indian accents as Hindi/Welsh)
+            vad_filter=True,   # Native Silero VAD integrated inside faster-whisper
+            vad_parameters=self.vad_parameters,
+            beam_size=2,        # Beam search for superior phonetic accuracy
             temperature=0.0,
             initial_prompt=prompt,
             condition_on_previous_text=False,  # Avoid runaway hallucination loops
@@ -103,17 +99,12 @@ class RealtimeSTT:
 
     def has_speech(self, audio_np: np.ndarray) -> bool:
         """
-        Return True if Silero VAD detects at least one speech segment.
-        Correct call: get_speech_timestamps(audio, vad_options, sampling_rate).
+        Fast energy check: Returns True if audio contains audible signal above noise floor.
         """
         if audio_np.size == 0:
             return False
-        timestamps = get_speech_timestamps(
-            audio_np,
-            self.vad_options,
-            sampling_rate=16000,
-        )
-        return bool(timestamps)
+        rms = float(np.sqrt(np.mean(audio_np ** 2)))
+        return rms >= 0.002
 
 
 # Lazy singleton — instantiated once at first WebSocket connection, not at import

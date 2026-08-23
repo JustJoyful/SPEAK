@@ -19,15 +19,14 @@ def test_build_clinical_prompt_defaults():
     prompt = build_clinical_prompt()
     assert "Dolo 650" in prompt
     assert "Paracetamol" in prompt
-    assert "9876543210" in prompt
-    assert "Aadhaar" in prompt
+    assert "BP 120/80" in prompt
     assert prompt == DEFAULT_INDIAN_CLINICAL_PROMPT
 
 
 def test_build_clinical_prompt_dynamic_patient():
     """Verify dynamic prompt prepends patient name and chief complaint."""
     prompt = build_clinical_prompt(patient_name="Meena Devi", complaint="Follow-up, diabetes")
-    assert prompt.startswith("Patient: Meena Devi. Chief Complaint: Follow-up, diabetes.")
+    assert prompt.startswith("Patient: Meena Devi. Chief complaint: Follow-up, diabetes.")
     assert "Dolo 650" in prompt
     assert "Metformin" in prompt
 

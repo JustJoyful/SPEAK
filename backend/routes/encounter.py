@@ -77,7 +77,16 @@ async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
     import numpy as np
 
     stt = get_stt_engine()  # lazy singleton — model loads on first WS connection
-    buffer = b""
+    raw_buffer = b""
+    speech_chunks = []
+    buffered_speech_samples = 0
+    trailing_silence_samples = 0
+
+    SAMPLE_RATE = 16000
+    MIN_SPEECH_SAMPLES = int(0.6 * SAMPLE_RATE)    # At least 600ms of speech before triggering on pause
+    MAX_SPEECH_SAMPLES = int(3.5 * SAMPLE_RATE)    # Max 3.5s phrase before auto-transcribing
+    PAUSE_SILENCE_SAMPLES = int(0.4 * SAMPLE_RATE) # 400ms pause triggers sentence boundary
+    SLICE_BYTES = 8000                             # 250ms audio slice (4000 samples)
 
     # Look up patient context to condition Whisper decoder for high phonetic accuracy
     entry = get_queue_entry_by_token(token_number)
@@ -88,55 +97,76 @@ async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
     try:
         while True:
             data = await websocket.receive_bytes()
-            buffer += data
+            raw_buffer += data
 
-            # 16 000 Hz × 2 bytes (int16) = 32 000 bytes per second.
-            # Process in 1-second chunks to balance latency vs. transcription quality.
-            if len(buffer) >= 32000:
-                aligned_len = len(buffer) - (len(buffer) % 2)
-                chunk, buffer = buffer[:aligned_len], buffer[aligned_len:]
+            # Process in 250ms chunks (8,000 bytes) for fine-grained VAD and phrase accumulation
+            while len(raw_buffer) >= SLICE_BYTES:
+                slice_data = raw_buffer[:SLICE_BYTES]
+                raw_buffer = raw_buffer[SLICE_BYTES:]
 
-                audio_np = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+                chunk_np = np.frombuffer(slice_data, dtype=np.int16).astype(np.float32) / 32768.0
+                rms = float(np.sqrt(np.mean(chunk_np ** 2)))
+                is_speech = rms >= 0.0025
 
-                # Offload Silero VAD to thread pool to prevent blocking asyncio loop
-                has_voice = await asyncio.to_thread(stt.has_speech, audio_np)
-                if not has_voice:
-                    continue  # Silence or fan noise — skip Whisper, save CPU
+                should_transcribe = False
+                if is_speech:
+                    trailing_silence_samples = 0
+                    speech_chunks.append(chunk_np)
+                    buffered_speech_samples += len(chunk_np)
+                    if buffered_speech_samples >= MAX_SPEECH_SAMPLES:
+                        should_transcribe = True
+                else:
+                    if buffered_speech_samples >= MIN_SPEECH_SAMPLES:
+                        trailing_silence_samples += len(chunk_np)
+                        speech_chunks.append(chunk_np)
+                        buffered_speech_samples += len(chunk_np)
+                        if trailing_silence_samples >= PAUSE_SILENCE_SAMPLES:
+                            should_transcribe = True
+                    else:
+                        # Clear stray noise / clicks when not part of sustained speech
+                        speech_chunks.clear()
+                        buffered_speech_samples = 0
+                        trailing_silence_samples = 0
 
-                # Offload Whisper inference to thread pool with Indian clinical prompt
-                text = await asyncio.to_thread(stt.transcribe_segment, audio_np, clinical_prompt)
-                if not text:
-                    continue
+                if should_transcribe and speech_chunks:
+                    full_audio_np = np.concatenate(speech_chunks)
+                    speech_chunks.clear()
+                    buffered_speech_samples = 0
+                    trailing_silence_samples = 0
 
-                active_session.append_transcript(token_number, text)
+                    text = await asyncio.to_thread(stt.transcribe_segment, full_audio_np, clinical_prompt)
+                    if not text:
+                        continue
 
-                # Regex-only PII pass during live dictation — fast (<1ms) and avoids
-                # loading GLiNER (500MB) while Whisper is already in RAM.
-                # Full GLiNER masking happens at finalize before any cloud egress.
-                regex_spans = global_pii_masker._regex_pass(text)
-                display_text = text
-                for span in sorted(regex_spans, key=lambda s: s["start"], reverse=True):
-                    display_text = display_text[:span["start"]] + span["replacement"] + display_text[span["end"]:]
+                    active_session.append_transcript(token_number, text)
 
-                state = active_session.get_current_state(token_number)
-                cumulative = state.get("transcript", "")
-                checklist, _ = await extract_checklist(cumulative)
+                    # Regex-only PII pass during live dictation — fast (<1ms)
+                    regex_spans = global_pii_masker._regex_pass(text)
+                    display_text = text
+                    for span in sorted(regex_spans, key=lambda s: s["start"], reverse=True):
+                        display_text = display_text[:span["start"]] + span["replacement"] + display_text[span["end"]:]
 
-                await websocket.send_json({
-                    "type": "TRANSCRIPT_CHUNK",
-                    "text": display_text,
-                    "ui_toggles": checklist.model_dump() if checklist else {}
-                })
+                    state = active_session.get_current_state(token_number)
+                    cumulative = state.get("transcript", "")
+                    checklist, _ = await extract_checklist(cumulative)
+
+                    await websocket.send_json({
+                        "type": "TRANSCRIPT_CHUNK",
+                        "text": display_text,
+                        "ui_toggles": checklist.model_dump() if checklist else {}
+                    })
 
     except WebSocketDisconnect:
         # Flush any remaining audio in the buffer on clean disconnect
         try:
-            if len(buffer) >= 3200:  # at least 0.1 s
-                aligned_len = len(buffer) - (len(buffer) % 2)
-                audio_np = np.frombuffer(buffer[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
-                has_voice = await asyncio.to_thread(stt.has_speech, audio_np)
-                if has_voice:
-                    text = await asyncio.to_thread(stt.transcribe_segment, audio_np, clinical_prompt)
+            flush_list = list(speech_chunks)
+            if len(raw_buffer) >= 3200:
+                aligned_len = len(raw_buffer) - (len(raw_buffer) % 2)
+                flush_list.append(np.frombuffer(raw_buffer[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0)
+            if flush_list:
+                full_audio_np = np.concatenate(flush_list)
+                if len(full_audio_np) >= int(0.3 * SAMPLE_RATE):
+                    text = await asyncio.to_thread(stt.transcribe_segment, full_audio_np, clinical_prompt)
                     if text:
                         active_session.append_transcript(token_number, text)
         except Exception:  # noqa: BLE001

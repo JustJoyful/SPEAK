@@ -15,8 +15,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { medSyncApi } from '@/api/client'
 
-// Accumulate PCM bytes here; ship to backend every ~1 s (32 000 bytes at 16 kHz int16)
-const CHUNK_BYTES = 32000
+// Accumulate PCM bytes here; ship to backend every ~0.5 s (16 000 bytes at 16 kHz int16)
+const CHUNK_BYTES = 16000
 
 export function useAudioStreamer(token, onTranscript, onToggles) {
   const wsRef       = useRef(null)
@@ -24,7 +24,7 @@ export function useAudioStreamer(token, onTranscript, onToggles) {
   const streamRef   = useRef(null)
   const workletRef  = useRef(null)
   const analyserRef = useRef(null)
-  const bufferRef   = useRef([])        // Array of Int16Array chunks pending send
+  const pendingRef  = useRef(new Uint8Array(0))
   const rafRef      = useRef(null)
 
   const [audioLevel, setAudioLevel] = useState(0)
@@ -37,11 +37,22 @@ export function useAudioStreamer(token, onTranscript, onToggles) {
     if (analyserRef.current) { analyserRef.current.disconnect(); analyserRef.current = null }
     if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); audioCtxRef.current = null }
     if (streamRef.current)   { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null }
+    
     if (wsRef.current) {
-      if (wsRef.current.readyState === WebSocket.OPEN) wsRef.current.close()
+      if (wsRef.current.readyState === WebSocket.OPEN) {
+        // Flush any remaining buffer before closing
+        if (pendingRef.current && pendingRef.current.length > 0) {
+          try {
+            wsRef.current.send(pendingRef.current.buffer)
+          } catch (e) {
+            // Ignore send error on teardown
+          }
+        }
+        wsRef.current.close()
+      }
       wsRef.current = null
     }
-    bufferRef.current = []
+    pendingRef.current = new Uint8Array(0)
     setAudioLevel(0)
   }, [])
 
@@ -49,10 +60,16 @@ export function useAudioStreamer(token, onTranscript, onToggles) {
   const startStreaming = useCallback(async () => {
     try {
       setError(null)
+      pendingRef.current = new Uint8Array(0)
 
       // 1. Mic access
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
         video: false,
       })
       streamRef.current = stream
@@ -114,11 +131,9 @@ export function useAudioStreamer(token, onTranscript, onToggles) {
       // Wait for WS to open before attaching the worklet
       await new Promise((resolve, reject) => {
         ws.onopen  = resolve
-        // If it closes before opening it's a hard error
         const origClose = ws.onclose
         ws.onclose = (e) => { origClose && origClose(e); reject(new Error('WS closed before open')) }
       })
-      // Restore the real onclose handler now that we're open
       ws.onclose = () => setAudioLevel(0)
 
       // 5. AudioWorklet — replaces deprecated ScriptProcessorNode
@@ -126,26 +141,28 @@ export function useAudioStreamer(token, onTranscript, onToggles) {
       const worklet = new AudioWorkletNode(audioCtx, 'pcm-processor')
       workletRef.current = worklet
 
-      // Accumulate PCM chunks and ship in ~1 s batches to match backend buffer size
-      let pending = new Uint8Array(0)
       worklet.port.onmessage = (e) => {
         if (ws.readyState !== WebSocket.OPEN) return
 
         const incoming = new Uint8Array(e.data)
-        // Append to pending
-        const merged = new Uint8Array(pending.length + incoming.length)
-        merged.set(pending)
-        merged.set(incoming, pending.length)
-        pending = merged
+        const current = pendingRef.current
+        const merged = new Uint8Array(current.length + incoming.length)
+        merged.set(current)
+        merged.set(incoming, current.length)
+        pendingRef.current = merged
 
-        if (pending.length >= CHUNK_BYTES) {
-          ws.send(pending.slice(0, CHUNK_BYTES).buffer)
-          pending = pending.slice(CHUNK_BYTES)
+        if (pendingRef.current.length >= CHUNK_BYTES) {
+          ws.send(pendingRef.current.slice(0, CHUNK_BYTES).buffer)
+          pendingRef.current = pendingRef.current.slice(CHUNK_BYTES)
         }
       }
 
+      // Connect source to worklet and route to a silent gain node to prevent speaker feedback
+      const silentGain = audioCtx.createGain()
+      silentGain.gain.value = 0
       source.connect(worklet)
-      worklet.connect(audioCtx.destination) // Required: worklet must be connected to output graph
+      worklet.connect(silentGain)
+      silentGain.connect(audioCtx.destination)
 
     } catch (err) {
       console.error('[STT] Failed to start:', err)
