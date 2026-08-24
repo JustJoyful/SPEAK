@@ -48,7 +48,11 @@ export const medSyncApi = {
     method: "POST",
     body: JSON.stringify({ token_number: tokenNumber }),
   }),
+  resetEncounter: (tokenNumber) => request(`/encounter/${tokenNumber}/reset`, {
+    method: "POST",
+  }),
   processText: (tokenNumber, { text, language }) => request(`/encounter/${tokenNumber}/transcript`, {
+
     method: "POST",
     body: JSON.stringify({ text, language }),
   }),

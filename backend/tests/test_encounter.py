@@ -43,6 +43,15 @@ def test_select_patient_success():
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
+def test_reset_encounter():
+    token = get_token()
+    with patch("backend.routes.encounter.active_session.clear_session") as mock_clear:
+        response = client.post(f"/encounter/{token}/reset", headers={"X-Role": "Doctor"})
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+        mock_clear.assert_called_once_with(token)
+
+
 @patch("backend.routes.encounter.active_session.append_transcript")
 @patch("backend.routes.encounter.extract_checklist")
 @patch("backend.routes.encounter.event_bus.publish")

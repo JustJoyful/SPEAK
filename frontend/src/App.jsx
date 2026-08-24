@@ -231,9 +231,28 @@ export default function App() {
 
   usePipelineStream({ enabled: backendConfigured, onEvent: handlePipelineEvent })
 
+  const handleWSTranscript = useCallback((newText) => {
+    setRawTranscript((prev) => {
+      const updated = prev ? prev + " " + newText : newText;
+      setWords(updated.trim() ? updated.trim().split(/\s+/) : []);
+      return updated;
+    });
+  }, []);
+
+  const handleWSToggles = useCallback((toggles) => {
+    setChecks((current) => ({ ...current, ...toggles }));
+  }, []);
+
+  const { startStreaming, stopStreaming, audioLevel } = useAudioStreamer(
+    activeToken,
+    handleWSTranscript,
+    handleWSToggles
+  );
+
   const resetCase = useCallback(
     (token) => {
       clearTimers()
+      stopStreaming()
       setRecording(false)
       setProcessing(false)
       setFinished(false)
@@ -246,6 +265,9 @@ export default function App() {
       setPhase("idle")
       setSeam(false)
       setRecord(null)
+      if (backendConfigured) {
+        medSyncApi.resetEncounter(token).catch(() => {})
+      }
       setLogs([
         ...idleLines(),
         {
@@ -257,11 +279,12 @@ export default function App() {
         },
       ])
     },
-    [clearTimers],
+    [clearTimers, stopStreaming, backendConfigured],
   )
 
   const handleDiscard = useCallback(() => {
     clearTimers()
+    stopStreaming()
     setRecording(false)
     setProcessing(false)
     setFinished(false)
@@ -275,12 +298,16 @@ export default function App() {
     setSeam(false)
     setRecord(null)
     setFinishError("")
+    if (backendConfigured) {
+      medSyncApi.resetEncounter(activeToken).catch(() => {})
+    }
     setLogs(idleLines())
-  }, [clearTimers])
+  }, [clearTimers, stopStreaming, activeToken, backendConfigured])
 
   const handleSelect = useCallback(
     async (token) => {
       if (token === activeToken) return
+      stopStreaming()
       setSelectionBusy(token)
 
       const targetCase = cases.find((c) => c.token === token)
@@ -327,30 +354,11 @@ export default function App() {
       }
       setSelectionBusy(null)
     },
-    [activeToken, cases, resetCase, pushLog],
+    [activeToken, cases, resetCase, pushLog, stopStreaming, backendConfigured],
   )
 
-
-
-  const handleWSTranscript = useCallback((newText) => {
-    setRawTranscript((prev) => {
-      const updated = prev ? prev + " " + newText : newText;
-      setWords(updated.trim() ? updated.trim().split(/\s+/) : []);
-      return updated;
-    });
-  }, []);
-
-  const handleWSToggles = useCallback((toggles) => {
-    setChecks((current) => ({ ...current, ...toggles }));
-  }, []);
-
-  const { startStreaming, stopStreaming, audioLevel } = useAudioStreamer(
-    activeToken,
-    handleWSTranscript,
-    handleWSToggles
-  );
-
   const scriptWords = useMemo(() => active.script.split(/\s+/), [active.script])
+
 
 
   useEffect(() => {

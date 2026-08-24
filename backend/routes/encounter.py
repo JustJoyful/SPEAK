@@ -29,6 +29,14 @@ async def select_patient(token_number: int):
     event_bus.log_audit_event("SELECT_PATIENT", f"Token {token_number} selected.", "Doctor")
     return result
 
+@router.post("/{token_number}/reset", dependencies=[Depends(verify_doctor)])
+async def reset_encounter(token_number: int):
+    """Resets the encounter session and clears cumulative transcript."""
+    active_session.clear_session(token_number)
+    event_bus.log_audit_event("RESET_ENCOUNTER", f"Token {token_number} session reset.", "Doctor")
+    return {"status": "success", "token_number": token_number, "message": "Encounter reset"}
+
+
 @router.post("/{token_number}/transcript", dependencies=[Depends(verify_doctor)])
 async def append_transcript(token_number: int, data: Dict[str, str] = Body(...)):
     """Receives partial transcript from the frontend (STT)."""

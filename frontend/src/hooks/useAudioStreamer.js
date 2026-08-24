@@ -2,89 +2,68 @@
  * useAudioStreamer — real-time microphone → WebSocket PCM streaming
  *
  * Key decisions:
- *  - AudioContext is forced to 16 000 Hz to match faster-whisper's expected sample rate.
- *    Without this the browser captures at 44 100 / 48 000 Hz and Whisper hears slow,
- *    pitched-down audio and produces garbage transcripts.
- *  - AudioWorklet replaces the deprecated ScriptProcessorNode (removed in Chrome 115+).
- *    The worklet runs in a dedicated audio-rendering thread and posts int16 PCM buffers
- *    back to the main thread zero-copy via transferable ArrayBuffers.
- *  - The WebSocket sends raw binary PCM frames. Auth is via ?role=doctor query param
- *    because the browser WebSocket API cannot send custom HTTP headers.
+ *  - Lazy user-gesture initialization: Mic hardware & AudioContext are initialized once on the
+ *    first doctor click to satisfy modern browser Autoplay Policies.
+ *  - Persistent warm stream: The MediaStream and AudioContext stay alive across patient switches
+ *    and mic pauses (suspended to save CPU, resumed instantly without hardware DC pop).
+ *  - Strict hardware constraints: autoGainControl=false and noiseSuppression=false prevent
+ *    browser AGC from surging background noise into Silero VAD during doctor pauses.
+ *  - Direct zero-copy dispatch: AudioWorklet PCM buffers are piped directly to WebSocket.send()
+ *    with zero mutable accumulator arrays or poison teardown flushes.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { medSyncApi } from '@/api/client'
 
-// Accumulate PCM bytes here; ship to backend every ~0.5 s (16 000 bytes at 16 kHz int16)
-const CHUNK_BYTES = 16000
-
 export function useAudioStreamer(token, onTranscript, onToggles) {
-  const wsRef       = useRef(null)
-  const audioCtxRef = useRef(null)
-  const streamRef   = useRef(null)
-  const workletRef  = useRef(null)
-  const analyserRef = useRef(null)
-  const pendingRef  = useRef(new Uint8Array(0))
-  const rafRef      = useRef(null)
+  const wsRef             = useRef(null)
+  const audioCtxRef       = useRef(null)
+  const streamRef         = useRef(null)
+  const sourceRef         = useRef(null)
+  const workletRef        = useRef(null)
+  const analyserRef       = useRef(null)
+  const isInitializedRef  = useRef(false)
+  const isInitializingRef = useRef(false)
+  const rafRef            = useRef(null)
+
+  // Keep latest callbacks in refs to avoid stale closures
+  const onTranscriptRef = useRef(onTranscript)
+  const onTogglesRef    = useRef(onToggles)
+  useEffect(() => {
+    onTranscriptRef.current = onTranscript
+    onTogglesRef.current    = onToggles
+  }, [onTranscript, onToggles])
 
   const [audioLevel, setAudioLevel] = useState(0)
   const [error,      setError]      = useState(null)
 
-  // ── stop ────────────────────────────────────────────────────────────────────
-  const stopStreaming = useCallback(() => {
-    if (rafRef.current)      { cancelAnimationFrame(rafRef.current); rafRef.current = null }
-    if (workletRef.current)  { workletRef.current.disconnect(); workletRef.current = null }
-    if (analyserRef.current) { analyserRef.current.disconnect(); analyserRef.current = null }
-    if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); audioCtxRef.current = null }
-    if (streamRef.current)   { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null }
-    
-    if (wsRef.current) {
-      if (wsRef.current.readyState === WebSocket.OPEN) {
-        // Flush any remaining buffer before closing
-        if (pendingRef.current && pendingRef.current.length > 0) {
-          try {
-            wsRef.current.send(pendingRef.current.buffer)
-          } catch (e) {
-            // Ignore send error on teardown
-          }
-        }
-        wsRef.current.close()
-      }
-      wsRef.current = null
-    }
-    pendingRef.current = new Uint8Array(0)
-    setAudioLevel(0)
-  }, [])
+  // ── One-time lazy initialization on first user gesture ───────────────────────
+  const initAudio = useCallback(async () => {
+    if (isInitializedRef.current || isInitializingRef.current) return
+    isInitializingRef.current = true
 
-  // ── start ────────────────────────────────────────────────────────────────────
-  const startStreaming = useCallback(async () => {
     try {
-      setError(null)
-      pendingRef.current = new Uint8Array(0)
-
-      // 1. Mic access
+      // 1. Mic access with strict constraints (no AGC surging)
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
+          autoGainControl: false,
+          noiseSuppression: false,
           echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
         },
         video: false,
       })
       streamRef.current = stream
 
-      // 2. AudioContext forced to 16 kHz — browser resamples for us
+      // 2. AudioContext locked to 16 kHz
       const AudioContext = window.AudioContext || window.webkitAudioContext
       const audioCtx = new AudioContext({ sampleRate: 16000 })
       audioCtxRef.current = audioCtx
 
-      // Resume context if browser suspended it (autoplay policy)
-      if (audioCtx.state === 'suspended') await audioCtx.resume()
-
       const source = audioCtx.createMediaStreamSource(stream)
+      sourceRef.current = source
 
-      // 3. Analyser for the waveform visualiser (UI only)
+      // 3. Analyser for waveform visualiser
       const analyser = audioCtx.createAnalyser()
       analyser.fftSize = 256
       source.connect(analyser)
@@ -101,9 +80,76 @@ export function useAudioStreamer(token, onTranscript, onToggles) {
       }
       rafRef.current = requestAnimationFrame(updateLevel)
 
-      // 4. WebSocket — must be open before we start sending audio
+      // 4. AudioWorklet node
+      await audioCtx.audioWorklet.addModule('/audio-processor.js')
+      const worklet = new AudioWorkletNode(audioCtx, 'pcm-processor')
+      workletRef.current = worklet
+
+      // Route worklet through silent gain to prevent acoustic feedback to speakers
+      const silentGain = audioCtx.createGain()
+      silentGain.gain.value = 0
+      source.connect(worklet)
+      worklet.connect(silentGain)
+      silentGain.connect(audioCtx.destination)
+
+      isInitializedRef.current = true
+    } finally {
+      isInitializingRef.current = false
+    }
+  }, [])
+
+  // ── stopStreaming ────────────────────────────────────────────────────────────
+  const stopStreaming = useCallback(() => {
+    // 1. Immediately unbind worklet port to prevent trailing clicks/buffers
+    if (workletRef.current) {
+      workletRef.current.port.onmessage = null
+    }
+
+    // 2. Close WebSocket cleanly (no poison teardown flush)
+    if (wsRef.current) {
+      const ws = wsRef.current
+      wsRef.current = null
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close()
+      }
+    }
+
+    // 3. Suspend AudioContext to save CPU without destroying hardware tracks
+    if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
+      audioCtxRef.current.suspend().catch(() => {})
+    }
+
+    setAudioLevel(0)
+  }, [])
+
+  // ── startStreaming ───────────────────────────────────────────────────────────
+  const startStreaming = useCallback(async (explicitToken) => {
+    const currentToken = explicitToken || token
+    try {
+      setError(null)
+
+      // 1. Lazy init on first user gesture
+      if (!isInitializedRef.current) {
+        await initAudio()
+      }
+
+      // 2. Resume AudioContext
+      if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+        await audioCtxRef.current.resume()
+      }
+
+      // 3. Clean up any previous socket before creating a new one
+      if (wsRef.current) {
+        wsRef.current.onclose = null
+        wsRef.current.onerror = null
+        wsRef.current.onmessage = null
+        wsRef.current.close()
+        wsRef.current = null
+      }
+
+      // 4. Open WebSocket for this specific patient encounter
       const wsUrl = medSyncApi.baseURL.replace(/^http/, 'ws')
-        + `/encounter/${token}/audio-stream?role=doctor`
+        + `/encounter/${currentToken}/audio-stream?role=doctor`
       const ws = new WebSocket(wsUrl)
       ws.binaryType = 'arraybuffer'
       wsRef.current = ws
@@ -112,9 +158,10 @@ export function useAudioStreamer(token, onTranscript, onToggles) {
         try {
           const data = JSON.parse(event.data)
           if (data.type === 'TRANSCRIPT_CHUNK') {
-            if (data.text)       onTranscript(data.text)
-            if (data.ui_toggles && Object.keys(data.ui_toggles).length)
-              onToggles(data.ui_toggles)
+            if (data.text) onTranscriptRef.current?.(data.text)
+            if (data.ui_toggles && Object.keys(data.ui_toggles).length) {
+              onTogglesRef.current?.(data.ui_toggles)
+            }
           }
         } catch (e) {
           console.error('[STT] WS message parse error', e)
@@ -128,51 +175,54 @@ export function useAudioStreamer(token, onTranscript, onToggles) {
 
       ws.onclose = () => setAudioLevel(0)
 
-      // Wait for WS to open before attaching the worklet
+      // Wait for WS to open before attaching the worklet port
       await new Promise((resolve, reject) => {
-        ws.onopen  = resolve
+        ws.onopen = resolve
         const origClose = ws.onclose
-        ws.onclose = (e) => { origClose && origClose(e); reject(new Error('WS closed before open')) }
+        ws.onclose = (e) => {
+          if (origClose) origClose(e)
+          reject(new Error('WS closed before open'))
+        }
       })
       ws.onclose = () => setAudioLevel(0)
 
-      // 5. AudioWorklet — replaces deprecated ScriptProcessorNode
-      await audioCtx.audioWorklet.addModule('/audio-processor.js')
-      const worklet = new AudioWorkletNode(audioCtx, 'pcm-processor')
-      workletRef.current = worklet
-
-      worklet.port.onmessage = (e) => {
-        if (ws.readyState !== WebSocket.OPEN) return
-
-        const incoming = new Uint8Array(e.data)
-        const current = pendingRef.current
-        const merged = new Uint8Array(current.length + incoming.length)
-        merged.set(current)
-        merged.set(incoming, current.length)
-        pendingRef.current = merged
-
-        if (pendingRef.current.length >= CHUNK_BYTES) {
-          ws.send(pendingRef.current.slice(0, CHUNK_BYTES).buffer)
-          pendingRef.current = pendingRef.current.slice(CHUNK_BYTES)
+      // 5. Pipe PCM chunks directly to WebSocket (zero mutable accumulator, zero latency)
+      if (workletRef.current) {
+        workletRef.current.port.onmessage = (event) => {
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(event.data)
+          }
         }
       }
-
-      // Connect source to worklet and route to a silent gain node to prevent speaker feedback
-      const silentGain = audioCtx.createGain()
-      silentGain.gain.value = 0
-      source.connect(worklet)
-      worklet.connect(silentGain)
-      silentGain.connect(audioCtx.destination)
 
     } catch (err) {
       console.error('[STT] Failed to start:', err)
       setError(err.message || 'Microphone access denied')
       stopStreaming()
     }
-  }, [token, onTranscript, onToggles, stopStreaming])
+  }, [token, initAudio, stopStreaming])
 
-  // Cleanup on unmount
-  useEffect(() => () => stopStreaming(), [stopStreaming])
+  // Full unmount cleanup (hardware release on page exit only)
+  useEffect(() => {
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      if (workletRef.current) {
+        workletRef.current.port.onmessage = null
+        workletRef.current.disconnect()
+      }
+      if (analyserRef.current) analyserRef.current.disconnect()
+      if (sourceRef.current) sourceRef.current.disconnect()
+      if (audioCtxRef.current) audioCtxRef.current.close().catch(() => {})
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop())
+      }
+      if (wsRef.current) {
+        wsRef.current.close()
+        wsRef.current = null
+      }
+    }
+  }, [])
 
   return { startStreaming, stopStreaming, audioLevel, error }
 }
+
