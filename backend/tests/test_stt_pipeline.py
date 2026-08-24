@@ -1,6 +1,5 @@
 """Unit tests for Indian-accent optimized faster-whisper STT pipeline."""
 
-import os
 import pytest
 import asyncio
 import numpy as np
@@ -8,13 +7,13 @@ from unittest.mock import patch, MagicMock
 
 from backend.pipeline.stt import (
     RealtimeSTT,
+    AudioStreamSession,
     build_clinical_prompt,
     DEFAULT_INDIAN_CLINICAL_PROMPT,
     DEMO_SEEDED_PROMPT,
     get_stt_engine,
     _HALLUCINATION_PATTERNS,
     _MIN_AVG_LOG_PROB,
-    _RMS_FLOOR,
 )
 
 
@@ -42,29 +41,20 @@ def test_build_clinical_prompt_dynamic_patient():
     assert "metformin" in prompt
 
 
-def test_vad_silence_detection():
-    """Verify that pure silence (dead air) returns has_speech = False."""
-    stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
-    silence = np.zeros(16000, dtype=np.float32)
-    assert stt.has_speech(silence) is False
-    assert stt.has_speech(np.array([], dtype=np.float32)) is False
-
-
 def test_transcribe_empty_segment():
-    """Verify that empty array returns empty transcript immediately."""
+    """Verify that sub-100ms or empty array returns empty transcript immediately."""
     stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
     result = stt.transcribe_segment(np.array([], dtype=np.float32))
     assert result == ""
+    # 50ms at 16kHz = 800 samples — must be dropped
+    short_audio = np.random.randn(800).astype(np.float32)
+    assert stt.transcribe_segment(short_audio) == ""
 
 
 @pytest.mark.asyncio
 async def test_async_worker_offload():
-    """Verify that VAD and transcription execute in worker thread without blocking asyncio loop."""
+    """Verify that transcription executes with the relaxed decoder parameters."""
     stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
-    silence = np.zeros(16000, dtype=np.float32)
-
-    has_voice = await asyncio.to_thread(stt.has_speech, silence)
-    assert has_voice is False
 
     custom_prompt = build_clinical_prompt("Rahul Sharma", "Fever, 3 days")
     with patch.object(stt.model, "transcribe") as mock_transcribe:
@@ -81,27 +71,95 @@ async def test_async_worker_offload():
         _, kwargs = mock_transcribe.call_args
         assert kwargs["initial_prompt"] == custom_prompt
         assert kwargs["condition_on_previous_text"] is False
-        # Verify balanced (not over-aggressive) hallucination thresholds
-        assert kwargs["no_speech_threshold"] == 0.65
-        assert kwargs["compression_ratio_threshold"] == 1.9
+        # Verify relaxed thresholds
+        assert kwargs["no_speech_threshold"] == 0.60
+        assert kwargs["log_prob_threshold"] == -1.6
+        assert kwargs["compression_ratio_threshold"] == 2.0
         assert kwargs["temperature"] == 0.0   # scalar, not a list
 
 
-def test_rms_floor_blocks_low_energy_noise():
-    """Layer 1: Low-energy noise (AC hum, fan) must not reach the transcriber."""
+def test_audio_stream_session_throttling():
+    """Verify that AudioStreamSession accumulates chunks and throttles VAD until >= 512ms (8192 samples)."""
     stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
-    # Generate audio at RMS=0.004 — below the 0.008 floor
-    noise = np.random.randn(16000).astype(np.float32) * 0.004
-    # Normalize to exact RMS=0.004
-    noise = noise / (np.sqrt(np.mean(noise ** 2)) + 1e-9) * 0.004
-    assert stt.has_speech(noise) is False, "Sub-floor noise must not be classified as speech"
+    session = stt.create_stream_session("Test prompt")
+
+    # Send 100ms chunk (1600 samples = 3200 bytes int16)
+    chunk_100ms = (np.random.randn(1600).astype(np.float32) * 0.05 * 32768).astype(np.int16).tobytes()
+
+    with patch("backend.pipeline.stt.get_speech_timestamps") as mock_vad:
+        # First 100ms: below 512ms threshold -> no VAD call
+        res = session.add_chunk(chunk_100ms)
+        assert res == []
+        mock_vad.assert_not_called()
+
+        # Send 4 more 100ms chunks (total 500ms -> 8000 samples, still < 8192)
+        for _ in range(4):
+            session.add_chunk(chunk_100ms)
+        mock_vad.assert_not_called()
+
+        # 6th chunk brings total to 600ms (9600 samples >= 8192) -> VAD must be called
+        mock_vad.return_value = []
+        res = session.add_chunk(chunk_100ms)
+        assert res == []
+        mock_vad.assert_called_once()
 
 
-def test_rms_floor_passes_real_speech():
-    """Layer 1: Audio above the RMS floor must pass through."""
+def test_audio_stream_session_phrase_completion_and_shift():
+    """Verify that speech followed by >= 500ms trailing silence emits transcript and shifts buffer."""
     stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
-    speech_like = np.random.randn(16000).astype(np.float32) * 0.05  # RMS ~0.05
-    assert stt.has_speech(speech_like) is True
+    session = stt.create_stream_session("Test prompt")
+
+    # Construct 1.5s speech + 0.6s trailing silence = 2.1s (33600 samples)
+    total_samples = int(2.1 * 16000)
+    pcm_bytes = (np.random.randn(total_samples).astype(np.float32) * 0.05 * 32768).astype(np.int16).tobytes()
+
+    speech_end = int(1.5 * 16000)  # speech ended at 1.5s, trailing silence is 0.6s (9600 samples >= 8000)
+
+    with patch("backend.pipeline.stt.get_speech_timestamps") as mock_vad, \
+         patch.object(stt, "transcribe_segment") as mock_transcribe:
+        mock_vad.return_value = [{"start": 1600, "end": speech_end}]
+        mock_transcribe.return_value = "Patient Rahul Sharma 34 male"
+
+        transcripts = session.add_chunk(pcm_bytes)
+
+        assert transcripts == ["Patient Rahul Sharma 34 male"]
+        mock_transcribe.assert_called_once()
+        # Verify buffer was shifted past speech_end
+        assert len(session.buffer) == total_samples - speech_end
+
+
+def test_audio_stream_session_silence_reset():
+    """Verify that > 3.0s (48000 samples) of confirmed silence resets the buffer to empty."""
+    stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
+    session = stt.create_stream_session()
+
+    # 3.2s of silence (51200 samples)
+    silence_bytes = (np.zeros(51200, dtype=np.int16)).tobytes()
+
+    with patch("backend.pipeline.stt.get_speech_timestamps", return_value=[]):
+        res = session.add_chunk(silence_bytes)
+        assert res == []
+        assert len(session.buffer) == 0
+        assert session.last_eval_length == 0
+
+
+def test_audio_stream_session_flush():
+    """Verify flush transcribes any remaining speech in buffer and cleans up."""
+    stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
+    session = stt.create_stream_session("Test prompt")
+
+    # Ingest 1.0s audio without trailing silence
+    pcm_bytes = (np.random.randn(16000).astype(np.float32) * 0.05 * 32768).astype(np.int16).tobytes()
+    session.buffer = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+
+    with patch("backend.pipeline.stt.get_speech_timestamps") as mock_vad, \
+         patch.object(stt, "transcribe_segment") as mock_transcribe:
+        mock_vad.return_value = [{"start": 1000, "end": 15000}]
+        mock_transcribe.return_value = "Final consultation note"
+
+        text = session.flush()
+        assert text == "Final consultation note"
+        assert len(session.buffer) == 0
 
 
 def test_hallucination_blocklist_catches_thanks():
@@ -158,3 +216,4 @@ def test_low_confidence_segment_dropped():
         # Bad segment must be dropped, good segment must survive
         assert "Thanks for watching" not in result
         assert "Paracetamol" in result
+

@@ -71,14 +71,9 @@ _HALLUCINATION_PATTERNS: list[re.Pattern] = [
 
 # Minimum avg log-probability per token for a segment to be considered real speech.
 # Whisper returns ~log(1/vocab_size) ≈ -4.6 for random tokens — genuine speech
-# sits around -0.2 to -0.8. Indian-accented English with fast inter-word cadence
-# can score down to -1.2, so we gate at that value.
-_MIN_AVG_LOG_PROB: float = float(os.getenv("WHISPER_MIN_LOG_PROB", "-1.2"))
-
-# RMS floor: minimum signal energy required to even attempt transcription.
-# 0.005 filters AC hum and fan noise while accepting a laptop mic at normal
-# speaking distance (typical normalised RMS: 0.015–0.060).
-_RMS_FLOOR: float = float(os.getenv("WHISPER_RMS_FLOOR", "0.005"))
+# sits around -0.2 to -0.8. int8 quantization lowers internal log-probabilities;
+# gating at -1.6 ensures accented and fast Indian clinical speech is preserved.
+_MIN_AVG_LOG_PROB: float = float(os.getenv("WHISPER_MIN_LOG_PROB", "-1.6"))
 
 # ---------------------------------------------------------------------------
 # Weaponized demo-seeded initial_prompt
@@ -128,6 +123,102 @@ def build_clinical_prompt(patient_name: str = "", complaint: str = "") -> str:
     return " ".join(parts)
 
 
+class AudioStreamSession:
+    """
+    Stateful streaming audio session for WebSocket ingestion.
+
+    Maintains a rolling float32 PCM buffer (16 kHz mono).
+    Throttles Silero neural VAD evaluation to >= 512ms chunks to eliminate CPU death-loops.
+    Slices and transcribes only upon confirmed phrase boundaries (speech followed by >= 500ms
+    of trailing silence). Safely shifts the buffer to preserve natural leading context.
+    """
+
+    def __init__(self, stt_engine: "RealtimeSTT", initial_prompt: str = ""):
+        self.stt = stt_engine
+        self.prompt = initial_prompt or DEMO_SEEDED_PROMPT
+        self.buffer: np.ndarray = np.array([], dtype=np.float32)
+        self.last_eval_length: int = 0
+        self.vad_options = VadOptions(
+            threshold=0.40,
+            min_speech_duration_ms=100,
+            min_silence_duration_ms=500,
+            speech_pad_ms=150,
+        )
+
+    def add_chunk(self, pcm_bytes: bytes) -> list[str]:
+        """
+        Ingest raw PCM int16 16kHz mono audio bytes.
+        Returns a list of complete transcribed phrases (usually 0 or 1).
+        """
+        if not pcm_bytes:
+            return []
+
+        # Convert int16 bytes to normalized float32
+        chunk_np = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+        if self.buffer.size == 0:
+            self.buffer = chunk_np
+        else:
+            self.buffer = np.concatenate([self.buffer, chunk_np])
+
+        # Step 1: Throttle VAD evaluation — 512ms = 8,192 samples at 16 kHz
+        if len(self.buffer) - self.last_eval_length < 8192:
+            return []
+
+        self.last_eval_length = len(self.buffer)
+        transcripts: list[str] = []
+
+        # Step 2: Run Silero VAD over the full active buffer
+        timestamps = get_speech_timestamps(self.buffer, self.vad_options)
+
+        if not timestamps:
+            # Confirmed continuous silence across > 3.0s (48,000 samples) → clean reset
+            if len(self.buffer) > 48000:
+                self.buffer = np.array([], dtype=np.float32)
+                self.last_eval_length = 0
+            return []
+
+        # Step 3: Phrase completion check
+        # A phrase is complete when the last detected speech segment is followed by
+        # at least 500ms (8,000 samples) of confirmed trailing silence.
+        last_end = timestamps[-1]["end"]
+        samples_after_speech = len(self.buffer) - last_end
+
+        if samples_after_speech >= 8000:
+            # Extract the speech block up to the confirmed end of speech
+            speech_segment = self.buffer[:last_end]
+
+            text = self.stt.transcribe_segment(speech_segment, initial_prompt=self.prompt)
+            if text:
+                transcripts.append(text)
+
+            # Step 4: Safe Shift — retain the trailing silence as leading context for the next phrase
+            self.buffer = self.buffer[last_end:]
+            self.last_eval_length = len(self.buffer)
+
+        return transcripts
+
+    def flush(self) -> str:
+        """
+        Flush remaining buffer on stream termination / disconnect.
+        Transcribes any buffered speech that had not reached the full 500ms pause threshold.
+        """
+        if self.buffer.size < 1600:  # < 100ms
+            self.buffer = np.array([], dtype=np.float32)
+            self.last_eval_length = 0
+            return ""
+
+        timestamps = get_speech_timestamps(self.buffer, self.vad_options)
+        text = ""
+        if timestamps:
+            last_end = timestamps[-1]["end"]
+            speech_segment = self.buffer[:last_end] if last_end > 0 else self.buffer
+            text = self.stt.transcribe_segment(speech_segment, initial_prompt=self.prompt)
+
+        self.buffer = np.array([], dtype=np.float32)
+        self.last_eval_length = 0
+        return text
+
+
 class RealtimeSTT:
     def __init__(
         self,
@@ -148,21 +239,17 @@ class RealtimeSTT:
             compute_type=compute_type,
             cpu_threads=cpu_threads
         )
-        # Balanced VAD — filters dead air and fan noise without cutting Indian-accented speech.
-        #
-        # threshold=0.45     — Slightly below Silero default (0.5) to catch softer voices.
-        # min_speech_duration_ms=100  — Accept phrases as short as 100ms ("BP" / "yes").
-        # min_silence_duration_ms=500 — Wait 500ms of silence before closing a segment.
-        #                               Longer pauses between Indian English words won't
-        #                               cause premature segment splits.
-        # speech_pad_ms=120  — 120ms padding around speech edges to catch word onsets.
         self.vad_parameters = dict(
-            threshold=0.45,
+            threshold=0.40,
             min_speech_duration_ms=100,
             min_silence_duration_ms=500,
-            speech_pad_ms=120,
+            speech_pad_ms=150,
         )
-        logger.info("STT pipeline ready — demo-seeded prompt + balanced VAD loaded.")
+        logger.info("STT pipeline ready — demo-seeded prompt + stateful neural VAD loaded.")
+
+    def create_stream_session(self, initial_prompt: str = "") -> AudioStreamSession:
+        """Instantiate a stateful streaming session for a WebSocket connection."""
+        return AudioStreamSession(self, initial_prompt=initial_prompt)
 
     def transcribe_segment(
         self,
@@ -172,60 +259,40 @@ class RealtimeSTT:
         """
         Run faster-whisper on a Float32 NumPy array at 16 000 Hz mono.
         Returns the stripped transcript string, or "" for silence/noise.
-
-        Hallucination suppression is applied at four layers:
-          Layer 1 — RMS energy floor (has_speech)
-          Layer 2 — Whisper decoder thresholds (no_speech_threshold, compression_ratio_threshold)
-          Layer 3 — Per-segment avg_log_prob confidence gate
-          Layer 4 — Known hallucination phrase blocklist
         """
-        if audio_np.size == 0 or not self.has_speech(audio_np):
+        if audio_np.size < 1600:  # Ignore sub-100ms blips
             return ""
 
         prompt = initial_prompt or DEMO_SEEDED_PROMPT
 
-        # Layer 2: Hardened decoder — no guessing, no fallback, no randomness.
-        #
-        # temperature=0.0 (scalar float, NOT a list)
-        #   faster-whisper/Whisper accept either a float or a list of floats for temperature
-        #   fallback. Passing a plain 0.0 scalar disables the fallback chain entirely.
-        #   When Whisper fails at temperature 0 it returns empty — not hallucinated garbage.
-        #   NEVER pass [0.0, 0.2, 0.4] — each fallback step is a random walk into fiction.
-        #
-        # no_speech_threshold=0.65
-        #   Whisper's no_speech_prob for real microphone speech (even quiet) typically lands
-        #   between 0.40 and 0.70. At 0.80 we were dropping legitimate voice. 0.65 still
-        #   blocks clear silence and fan noise hum (which scores 0.85+).
-        #
-        # log_prob_threshold=-1.2
-        #   Indian English at natural pace scores avg_logprob ~-0.8 to -1.2. Previous
-        #   -1.0 was cutting off fast or accented speech at the decoder level.
-        #
-        # compression_ratio_threshold=1.9
-        #   Loops still compress better than real speech. 1.9 is tight without being
-        #   so tight that real repetitive medical language ("BP, BP 120 over 80") gets dropped.
+        # Decoder configuration:
+        # temperature=0.0: greedy decoding, eliminates random hallucination paths.
+        # condition_on_previous_text=False: resets context between phrases to kill loops.
+        # compression_ratio_threshold=2.0: drops repetitive character/word loops.
+        # no_speech_threshold=0.60: reliable speech confidence gate.
+        # log_prob_threshold=-1.6: relaxed for int8 quantization and fast Indian English cadence.
         segments, _info = self.model.transcribe(
             audio_np,
             language="en",
             vad_filter=True,
             vad_parameters=self.vad_parameters,
             beam_size=2,
-            temperature=0.0,             # scalar — disables fallback chain entirely
+            temperature=0.0,
             initial_prompt=prompt,
             condition_on_previous_text=False,
-            compression_ratio_threshold=1.9,
-            no_speech_threshold=0.65,          # was 0.80 — too aggressive for real mic input
-            log_prob_threshold=-1.2,           # was -1.0 — too tight for Indian accent
+            compression_ratio_threshold=2.0,
+            no_speech_threshold=0.60,
+            log_prob_threshold=-1.6,
         )
 
-        # Layer 3 + 4: Per-segment confidence gate and phrase blocklist
+        # Per-segment confidence gate and phrase blocklist
         clean_parts: list[str] = []
         for seg in segments:
             text = seg.text.strip()
             if not text:
                 continue
 
-            # Layer 3: avg_log_prob gate — hallucinated segments score very low
+            # avg_logprob gate: filter low-confidence hallucination tokens
             if hasattr(seg, "avg_logprob") and seg.avg_logprob < _MIN_AVG_LOG_PROB:
                 logger.debug(
                     "Dropped low-confidence segment (avg_logprob=%.3f): %r",
@@ -233,7 +300,7 @@ class RealtimeSTT:
                 )
                 continue
 
-            # Layer 4: known hallucination phrase blocklist
+            # Known hallucination phrase blocklist
             if any(pat.search(text) for pat in _HALLUCINATION_PATTERNS):
                 logger.debug("Dropped hallucination phrase: %r", text)
                 continue
@@ -241,21 +308,6 @@ class RealtimeSTT:
             clean_parts.append(text)
 
         return " ".join(clean_parts).strip()
-
-    def has_speech(self, audio_np: np.ndarray) -> bool:
-        """
-        Layer 1 hallucination gate: Fast energy check.
-        Returns True only if the audio RMS is above the configured noise floor.
-
-        The floor is intentionally higher than a whisper to filter out:
-          - AC / fan background hum
-          - Keyboard / mouse click transients
-          - Microphone self-noise and breath
-        """
-        if audio_np.size == 0:
-            return False
-        rms = float(np.sqrt(np.mean(audio_np ** 2)))
-        return rms >= _RMS_FLOOR
 
 
 # Lazy singleton — instantiated once at first WebSocket connection, not at import

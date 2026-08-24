@@ -74,20 +74,8 @@ async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
     await websocket.accept()
 
     from backend.pipeline.stt import get_stt_engine, build_clinical_prompt
-    import numpy as np
 
     stt = get_stt_engine()  # lazy singleton — model loads on first WS connection
-    raw_buffer = b""
-    speech_chunks = []
-    buffered_speech_samples = 0
-    trailing_silence_samples = 0
-
-    SAMPLE_RATE = 16000
-    MIN_SPEECH_SAMPLES = int(0.6 * SAMPLE_RATE)    # At least 600ms of speech before triggering on pause
-    MAX_SPEECH_SAMPLES = int(3.5 * SAMPLE_RATE)    # Max 3.5s phrase before auto-transcribing
-    PAUSE_SILENCE_SAMPLES = int(0.4 * SAMPLE_RATE) # 400ms pause triggers sentence boundary
-    SLICE_BYTES = 8000                             # 250ms audio slice (4000 samples)
-    RMS_SPEECH_FLOOR = 0.008                       # Must match stt.py _RMS_FLOOR — filters AC hum
 
     # Look up patient context to condition Whisper decoder for high phonetic accuracy
     entry = get_queue_entry_by_token(token_number)
@@ -95,83 +83,37 @@ async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
     complaint = entry.get("chief_complaint", "") if entry else ""
     clinical_prompt = build_clinical_prompt(patient_name, complaint)
 
+    # Initialize stateful neural VAD stream session
+    session = stt.create_stream_session(clinical_prompt)
+
     try:
         while True:
             data = await websocket.receive_bytes()
-            raw_buffer += data
+            transcripts = await asyncio.to_thread(session.add_chunk, data)
+            for text in transcripts:
+                if not text:
+                    continue
 
-            # Process in 250ms chunks (8,000 bytes) for fine-grained VAD and phrase accumulation
-            while len(raw_buffer) >= SLICE_BYTES:
-                slice_data = raw_buffer[:SLICE_BYTES]
-                raw_buffer = raw_buffer[SLICE_BYTES:]
+                active_session.append_transcript(token_number, text)
+                state = active_session.get_current_state(token_number)
+                cumulative = state.get("transcript", "")
+                checklist, _ = await extract_checklist(cumulative)
 
-                chunk_np = np.frombuffer(slice_data, dtype=np.int16).astype(np.float32) / 32768.0
-                rms = float(np.sqrt(np.mean(chunk_np ** 2)))
-                is_speech = rms >= RMS_SPEECH_FLOOR
-
-                should_transcribe = False
-                if is_speech:
-                    trailing_silence_samples = 0
-                    speech_chunks.append(chunk_np)
-                    buffered_speech_samples += len(chunk_np)
-                    if buffered_speech_samples >= MAX_SPEECH_SAMPLES:
-                        should_transcribe = True
-                else:
-                    if buffered_speech_samples >= MIN_SPEECH_SAMPLES:
-                        trailing_silence_samples += len(chunk_np)
-                        speech_chunks.append(chunk_np)
-                        buffered_speech_samples += len(chunk_np)
-                        if trailing_silence_samples >= PAUSE_SILENCE_SAMPLES:
-                            should_transcribe = True
-                    else:
-                        # Clear stray noise / clicks when not part of sustained speech
-                        speech_chunks.clear()
-                        buffered_speech_samples = 0
-                        trailing_silence_samples = 0
-
-                if should_transcribe and speech_chunks:
-                    full_audio_np = np.concatenate(speech_chunks)
-                    speech_chunks.clear()
-                    buffered_speech_samples = 0
-                    trailing_silence_samples = 0
-
-                    text = await asyncio.to_thread(stt.transcribe_segment, full_audio_np, clinical_prompt)
-                    if not text:
-                        continue
-
-                    active_session.append_transcript(token_number, text)
-
-                    # Regex-only PII pass during live dictation — fast (<1ms)
-                    regex_spans = global_pii_masker._regex_pass(text)
-                    display_text = text
-                    for span in sorted(regex_spans, key=lambda s: s["start"], reverse=True):
-                        display_text = display_text[:span["start"]] + span["replacement"] + display_text[span["end"]:]
-
-                    state = active_session.get_current_state(token_number)
-                    cumulative = state.get("transcript", "")
-                    checklist, _ = await extract_checklist(cumulative)
-
-                    await websocket.send_json({
-                        "type": "TRANSCRIPT_CHUNK",
-                        "text": display_text,
-                        "ui_toggles": checklist.model_dump() if checklist else {}
-                    })
+                await websocket.send_json({
+                    "type": "TRANSCRIPT_CHUNK",
+                    "text": text,
+                    "ui_toggles": checklist.model_dump() if checklist else {}
+                })
 
     except WebSocketDisconnect:
-        # Flush any remaining audio in the buffer on clean disconnect
+        # Flush any remaining audio in the session buffer on disconnect
         try:
-            flush_list = list(speech_chunks)
-            if len(raw_buffer) >= 3200:
-                aligned_len = len(raw_buffer) - (len(raw_buffer) % 2)
-                flush_list.append(np.frombuffer(raw_buffer[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0)
-            if flush_list:
-                full_audio_np = np.concatenate(flush_list)
-                if len(full_audio_np) >= int(0.3 * SAMPLE_RATE):
-                    text = await asyncio.to_thread(stt.transcribe_segment, full_audio_np, clinical_prompt)
-                    if text:
-                        active_session.append_transcript(token_number, text)
+            flush_text = await asyncio.to_thread(session.flush)
+            if flush_text:
+                active_session.append_transcript(token_number, flush_text)
         except Exception:  # noqa: BLE001
             pass  # Best-effort flush — don't crash on disconnect
+
 
 @router.post("/{token_number}/finalize", dependencies=[Depends(verify_doctor)])
 async def finalize_encounter(token_number: int):
