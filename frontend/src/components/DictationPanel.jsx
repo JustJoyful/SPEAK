@@ -4,47 +4,6 @@ import { cn, clock } from "@/lib/utils"
 
 const BAR_COUNT = 28
 
-const playMicNoise = (isTurningOff) => {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)()
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-
-    osc.type = "sine"
-    const t = ctx.currentTime
-
-    if (isTurningOff) {
-      // Off: Descending bloop
-      osc.frequency.setValueAtTime(400, t)
-      osc.frequency.setValueAtTime(300, t + 0.1)
-
-      gain.gain.setValueAtTime(0, t)
-      gain.gain.linearRampToValueAtTime(0.2, t + 0.05)
-      gain.gain.linearRampToValueAtTime(0, t + 0.25)
-      
-      osc.start(t)
-      osc.stop(t + 0.25)
-    } else {
-      // On: Ascending bloop (like YouTube)
-      osc.frequency.setValueAtTime(500, t)
-      osc.frequency.setValueAtTime(750, t + 0.1)
-
-      gain.gain.setValueAtTime(0, t)
-      gain.gain.linearRampToValueAtTime(0.2, t + 0.05)
-      gain.gain.setValueAtTime(0.2, t + 0.1)
-      gain.gain.linearRampToValueAtTime(0, t + 0.25)
-
-      osc.start(t)
-      osc.stop(t + 0.25)
-    }
-
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-  } catch (e) {
-    // Ignore if audio context fails
-  }
-}
-
 export function DictationPanel({
   active,
   words,
@@ -157,10 +116,7 @@ export function DictationPanel({
           />
           <button
             type="button"
-            onClick={() => {
-              playMicNoise(recording)
-              onToggle()
-            }}
+            onClick={onToggle}
             disabled={finished || processing}
             aria-pressed={recording}
             aria-label={recording ? "Stop dictation" : "Start dictation"}

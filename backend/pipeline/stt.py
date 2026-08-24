@@ -69,6 +69,13 @@ _HALLUCINATION_PATTERNS: list[re.Pattern] = [
     ]
 ]
 
+# Exact hardcoded non-clinical filler words dropped ONLY when triggered by short (<0.6s) transient pops.
+# Does NOT use fuzzy/substring matching so legitimate single-word clinical findings
+# ("Cough", "Clear", "Left", "Normal") are completely preserved.
+_TRANSIENT_FILLER_WORDS: set[str] = {
+    "so", "okay", "yeah", "the", "you", "thanks", "um", "ah", "ok"
+}
+
 # Minimum avg log-probability per token for a segment to be considered real speech.
 # Whisper returns ~log(1/vocab_size) ≈ -4.6 for random tokens — genuine speech
 # sits around -0.2 to -0.8. int8 quantization lowers internal log-probabilities;
@@ -128,6 +135,8 @@ class AudioStreamSession:
     Stateful streaming audio session for WebSocket ingestion.
 
     Maintains a rolling float32 PCM buffer (16 kHz mono).
+    Absorbs the first 400ms (6,400 samples) of audio as a warm-up drop to eliminate
+    hardware mic switch pops and electrical DC offsets.
     Throttles Silero neural VAD evaluation to >= 512ms chunks to eliminate CPU death-loops.
     Slices and transcribes only upon confirmed phrase boundaries (speech followed by >= 500ms
     of trailing silence). Safely shifts the buffer to preserve natural leading context.
@@ -138,6 +147,8 @@ class AudioStreamSession:
         self.prompt = initial_prompt or DEMO_SEEDED_PROMPT
         self.buffer: np.ndarray = np.array([], dtype=np.float32)
         self.last_eval_length: int = 0
+        # Warm-up drop: 400ms (6,400 samples at 16 kHz) discarded to eliminate initialization pops
+        self.warmup_samples_remaining: int = 6400
         self.vad_options = VadOptions(
             threshold=0.40,
             min_speech_duration_ms=100,
@@ -152,6 +163,16 @@ class AudioStreamSession:
         """
         if not pcm_bytes:
             return []
+
+        # Step 0: Warm-up drop — discard hardware mic switch pops upon session start
+        if self.warmup_samples_remaining > 0:
+            samples_in_chunk = len(pcm_bytes) // 2
+            if samples_in_chunk <= self.warmup_samples_remaining:
+                self.warmup_samples_remaining -= samples_in_chunk
+                return []
+            drop_bytes = self.warmup_samples_remaining * 2
+            pcm_bytes = pcm_bytes[drop_bytes:]
+            self.warmup_samples_remaining = 0
 
         # Convert int16 bytes to normalized float32
         chunk_np = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
@@ -266,9 +287,10 @@ class RealtimeSTT:
         prompt = initial_prompt or DEMO_SEEDED_PROMPT
 
         # Decoder configuration:
-        # temperature=0.0: greedy decoding, eliminates random hallucination paths.
+        # beam_size=1: strict greedy decoding, eliminates random hallucination exploration.
+        # temperature=0.0: greedy decoding.
         # condition_on_previous_text=False: resets context between phrases to kill loops.
-        # compression_ratio_threshold=2.0: drops repetitive character/word loops.
+        # compression_ratio_threshold=1.8: drops repetitive character/word loops.
         # no_speech_threshold=0.60: reliable speech confidence gate.
         # log_prob_threshold=-1.6: relaxed for int8 quantization and fast Indian English cadence.
         segments, _info = self.model.transcribe(
@@ -276,16 +298,16 @@ class RealtimeSTT:
             language="en",
             vad_filter=True,
             vad_parameters=self.vad_parameters,
-            beam_size=2,
+            beam_size=1,
             temperature=0.0,
             initial_prompt=prompt,
             condition_on_previous_text=False,
-            compression_ratio_threshold=2.0,
+            compression_ratio_threshold=1.8,
             no_speech_threshold=0.60,
             log_prob_threshold=-1.6,
         )
 
-        # Per-segment confidence gate and phrase blocklist
+        # Per-segment confidence gate, transient filler gate, and phrase blocklist
         clean_parts: list[str] = []
         for seg in segments:
             text = seg.text.strip()
@@ -299,6 +321,13 @@ class RealtimeSTT:
                     seg.avg_logprob, text
                 )
                 continue
+
+            # Drop single isolated non-clinical filler words produced on short transient bursts (<0.6s)
+            if audio_np.size < 9600:
+                normalized_token = re.sub(r"[^\w]", "", text.strip().lower())
+                if normalized_token in _TRANSIENT_FILLER_WORDS:
+                    logger.debug("Dropped transient filler pop: %r", text)
+                    continue
 
             # Known hallucination phrase blocklist
             if any(pat.search(text) for pat in _HALLUCINATION_PATTERNS):

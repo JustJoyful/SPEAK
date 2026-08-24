@@ -113,6 +113,9 @@ async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
                 active_session.append_transcript(token_number, flush_text)
         except Exception:  # noqa: BLE001
             pass  # Best-effort flush — don't crash on disconnect
+    finally:
+        del session
+
 
 
 @router.post("/{token_number}/finalize", dependencies=[Depends(verify_doctor)])

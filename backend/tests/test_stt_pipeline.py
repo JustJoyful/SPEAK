@@ -53,7 +53,7 @@ def test_transcribe_empty_segment():
 
 @pytest.mark.asyncio
 async def test_async_worker_offload():
-    """Verify that transcription executes with the relaxed decoder parameters."""
+    """Verify that transcription executes with greedy beam_size=1 and compression_ratio_threshold=1.8."""
     stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
 
     custom_prompt = build_clinical_prompt("Rahul Sharma", "Fever, 3 days")
@@ -71,17 +71,89 @@ async def test_async_worker_offload():
         _, kwargs = mock_transcribe.call_args
         assert kwargs["initial_prompt"] == custom_prompt
         assert kwargs["condition_on_previous_text"] is False
-        # Verify relaxed thresholds
+        assert kwargs["beam_size"] == 1
         assert kwargs["no_speech_threshold"] == 0.60
         assert kwargs["log_prob_threshold"] == -1.6
-        assert kwargs["compression_ratio_threshold"] == 2.0
+        assert kwargs["compression_ratio_threshold"] == 1.8
         assert kwargs["temperature"] == 0.0   # scalar, not a list
+
+
+def test_warmup_drop_discards_first_400ms():
+    """Verify that AudioStreamSession absorbs the first 400ms (6400 samples) to kill mic switch pops."""
+    stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
+    session = stt.create_stream_session()
+
+    # Send 200ms of pop noise (3200 samples = 6400 bytes)
+    pop_200ms = (np.random.randn(3200).astype(np.float32) * 0.9 * 32768).astype(np.int16).tobytes()
+    res = session.add_chunk(pop_200ms)
+    assert res == []
+    assert len(session.buffer) == 0  # 0 samples appended
+    assert session.warmup_samples_remaining == 3200
+
+    # Send another 300ms (4800 samples = 9600 bytes)
+    audio_300ms = (np.random.randn(4800).astype(np.float32) * 0.05 * 32768).astype(np.int16).tobytes()
+    res = session.add_chunk(audio_300ms)
+    assert res == []
+    # 3200 samples consumed for warmup, remaining 1600 samples appended to buffer
+    assert len(session.buffer) == 1600
+    assert session.warmup_samples_remaining == 0
+
+
+def test_transient_filler_words_dropped_on_short_burst():
+    """Verify that isolated filler words like 'so', 'okay', 'yeah' are dropped when audio < 0.6s."""
+    stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
+
+    with patch.object(stt.model, "transcribe") as mock_transcribe:
+        for filler in ["so", "Okay.", "Yeah", "Thanks!", "um", "ah", "ok"]:
+            mock_seg = MagicMock()
+            mock_seg.text = filler
+            mock_seg.avg_logprob = -0.5
+            mock_transcribe.return_value = ([mock_seg], None)
+
+            # Short burst: 0.4s (6400 samples < 9600)
+            short_audio = np.random.randn(6400).astype(np.float32) * 0.05
+            result = stt.transcribe_segment(short_audio)
+            assert result == "", f"Transient filler {filler!r} should have been dropped on short burst"
+
+
+def test_clinical_single_words_preserved_on_short_burst():
+    """Verify that legitimate single-word clinical findings are NOT dropped."""
+    stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
+
+    with patch.object(stt.model, "transcribe") as mock_transcribe:
+        for clinical_word in ["Cough.", "Clear.", "Left.", "Normal.", "Nil.", "Pain."]:
+            mock_seg = MagicMock()
+            mock_seg.text = clinical_word
+            mock_seg.avg_logprob = -0.3
+            mock_transcribe.return_value = ([mock_seg], None)
+
+            # Short burst: 0.4s (6400 samples)
+            short_audio = np.random.randn(6400).astype(np.float32) * 0.05
+            result = stt.transcribe_segment(short_audio)
+            assert clinical_word in result, f"Clinical word {clinical_word!r} must be preserved"
+
+
+def test_repeated_medical_words_preserved():
+    """Verify that repeated medical dosage words are preserved intact."""
+    stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
+
+    with patch.object(stt.model, "transcribe") as mock_transcribe:
+        mock_seg = MagicMock()
+        mock_seg.text = "Take two two-milligram pills daily."
+        mock_seg.avg_logprob = -0.3
+        mock_transcribe.return_value = ([mock_seg], None)
+
+        audio = np.random.randn(16000 * 2).astype(np.float32) * 0.05
+        result = stt.transcribe_segment(audio)
+        assert "two two-milligram" in result
+
 
 
 def test_audio_stream_session_throttling():
     """Verify that AudioStreamSession accumulates chunks and throttles VAD until >= 512ms (8192 samples)."""
     stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
     session = stt.create_stream_session("Test prompt")
+    session.warmup_samples_remaining = 0  # Test post-warmup VAD evaluation logic
 
     # Send 100ms chunk (1600 samples = 3200 bytes int16)
     chunk_100ms = (np.random.randn(1600).astype(np.float32) * 0.05 * 32768).astype(np.int16).tobytes()
@@ -108,6 +180,7 @@ def test_audio_stream_session_phrase_completion_and_shift():
     """Verify that speech followed by >= 500ms trailing silence emits transcript and shifts buffer."""
     stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
     session = stt.create_stream_session("Test prompt")
+    session.warmup_samples_remaining = 0  # Test post-warmup phrase boundary shift
 
     # Construct 1.5s speech + 0.6s trailing silence = 2.1s (33600 samples)
     total_samples = int(2.1 * 16000)
@@ -132,6 +205,7 @@ def test_audio_stream_session_silence_reset():
     """Verify that > 3.0s (48000 samples) of confirmed silence resets the buffer to empty."""
     stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
     session = stt.create_stream_session()
+    session.warmup_samples_remaining = 0  # Test post-warmup silence timeout
 
     # 3.2s of silence (51200 samples)
     silence_bytes = (np.zeros(51200, dtype=np.int16)).tobytes()
@@ -141,6 +215,7 @@ def test_audio_stream_session_silence_reset():
         assert res == []
         assert len(session.buffer) == 0
         assert session.last_eval_length == 0
+
 
 
 def test_audio_stream_session_flush():
