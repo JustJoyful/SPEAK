@@ -451,9 +451,9 @@ export default function App() {
     })
   }, [words.length, active.marks, later, pushLog, backendConfigured])
 
-  // Debounced partial transcript upload to trigger edge pipeline (e.g. GLiNER checklist)
+  // Debounced partial transcript upload to trigger edge pipeline (e.g. GLiNER checklist) for both typing and speech
   useEffect(() => {
-    if (!backendConfigured || !recording || !rawTranscript.trim()) return
+    if (!backendConfigured || !rawTranscript.trim()) return
     const id = window.setTimeout(() => {
       medSyncApi.processText(activeToken, { text: rawTranscript, language: "en-IN" })
         .catch((err) => {
@@ -463,9 +463,9 @@ export default function App() {
             spans: [{ t: "text", v: `Partial sync failed · ${readableError(err)}` }],
           })
         })
-    }, 1500) // 1.5s debounce window for live dictation
+    }, 800) // 800ms debounce window for typing or live dictation
     return () => window.clearTimeout(id)
-  }, [backendConfigured, recording, rawTranscript, activeToken, pushLog])
+  }, [backendConfigured, rawTranscript, activeToken, pushLog])
 
   const handleToggle = useCallback(() => {
     if (recording) {

@@ -2,7 +2,7 @@ import asyncio
 import json
 from fastapi import APIRouter, Depends, HTTPException, Body, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from backend.routes.auth_deps import verify_doctor
 from backend.session.active_encounter import active_session
@@ -127,8 +127,14 @@ async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
 
 
 @router.post("/{token_number}/finalize", dependencies=[Depends(verify_doctor)])
-async def finalize_encounter(token_number: int):
+async def finalize_encounter(token_number: int, data: Optional[Dict[str, Any]] = Body(None)):
     """Finalizes the encounter, structuring the note and encrypting it."""
+    # If text was submitted directly in payload (e.g. typed in frontend), prioritize it
+    if data and data.get("text") and data["text"].strip():
+        typed_text = data["text"].strip()
+        from backend.db.local import update_session_transcript
+        update_session_transcript(token_number, typed_text, is_locked=False)
+
     state = active_session.get_current_state(token_number)
     entry = get_queue_entry_by_token(token_number)
     
@@ -137,6 +143,7 @@ async def finalize_encounter(token_number: int):
         
     cumulative_text = entry["cumulative_transcript"]
     care_context_id = entry["care_context_id"]
+
     
     # Run PII masking (Zero-Trust edge masking before Cloud LLM)
     from backend.pipeline.pii_mask import mask_pii

@@ -98,3 +98,31 @@ def test_finalize_encounter(mock_update_transcript, mock_update_sync, mock_clear
     assert response.json()["sync_status"] == "pending_structuring"
     mock_update.assert_called_once_with(token, "done")
     mock_update_sync.assert_called_once_with(token, "pending_structuring")
+
+
+@patch("backend.routes.encounter.active_session.get_current_state")
+@patch("backend.routes.encounter.get_queue_entry_by_token")
+@patch("backend.routes.encounter.update_token_status")
+@patch("backend.routes.encounter.active_session.clear_session")
+@patch("backend.db.local.update_sync_status")
+@patch("backend.db.local.update_session_transcript")
+def test_finalize_encounter_with_typed_text(mock_update_transcript, mock_update_sync, mock_clear, mock_update, mock_get_entry, mock_get_state):
+    token = get_token()
+    
+    mock_get_state.return_value = {"has_transcript": True}
+    mock_get_entry.return_value = {
+        "cumulative_transcript": "Patient typed clinical history directly.",
+        "care_context_id": "CC-123",
+        "abha_hash": "hash123"
+    }
+    
+    response = client.post(
+        f"/encounter/{token}/finalize",
+        json={"text": "Patient typed clinical history directly.", "language": "en-IN"},
+        headers={"X-Role": "Doctor"}
+    )
+    
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+    mock_update_transcript.assert_any_call(token, "Patient typed clinical history directly.", is_locked=False)
+

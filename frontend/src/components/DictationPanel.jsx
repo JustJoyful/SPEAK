@@ -22,16 +22,12 @@ export function DictationPanel({
 }) {
   const scrollRef = useRef(null)
   const [editing, setEditing] = useState(false)
-  const hasText = words.length > 0
-
-  useEffect(() => {
-    if (!hasText || recording || processing || finished) setEditing(false)
-  }, [finished, hasText, processing, recording])
+  const hasText = Boolean(rawTranscript && rawTranscript.trim().length > 0) || words.length > 0
 
   useEffect(() => {
     const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [words.length])
+    if (el && recording) el.scrollTop = el.scrollHeight
+  }, [words.length, recording])
 
   const bars = useMemo(
     () =>
@@ -43,7 +39,7 @@ export function DictationPanel({
     [],
   )
 
-  const wordCount = words.length
+  const wordCount = rawTranscript.trim() ? rawTranscript.trim().split(/\s+/).length : words.length
   const totalWords = active.script.split(/\s+/).length
   const pct = Math.min(100, Math.round((wordCount / totalWords) * 100))
 
@@ -174,50 +170,32 @@ export function DictationPanel({
               : recording
                 ? "Listening · Hindi + English · speak naturally"
                 : hasText
-                  ? "Paused — tap to continue dictating"
-                  : "Tap to dictate. Nothing is stored until you finish."}
+                  ? "Dictation paused · Edit directly below or tap mic to resume"
+                  : "Tap mic to dictate, or type directly into the notes box below"}
         </p>
       </div>
 
-      {/* transcript */}
+      {/* transcript & typing box */}
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex items-center justify-between gap-3 px-6 pb-2 pt-4 lg:px-8">
           <div className="flex items-center gap-2">
             <h3 className="text-[0.66rem] font-semibold uppercase tracking-[0.1em] text-clinical-muted">
-              Live transcript
+              Clinical Notes & Transcript
             </h3>
-            {/* editable badge — shown when the user can type */}
-            {hasText && !recording && !finished && !processing && (
+            {!recording && !finished && !processing && (
               <span className="flex items-center gap-1 rounded-full border border-teal/25 bg-teal-soft px-2 py-[2px] text-[0.58rem] font-medium text-teal">
                 <Pencil className="h-2.5 w-2.5" aria-hidden="true" />
-                editable
+                Type or dictate freely
               </span>
             )}
           </div>
           <div className="flex items-center gap-2.5">
             <span className="tnum text-[0.68rem] text-clinical-muted">{wordCount} words</span>
-            <span aria-hidden="true" className="h-3 w-px bg-clinical-line" />
-            <span className="tnum text-[0.68rem] text-clinical-muted">{pct}%</span>
-            {hasText && !recording && !processing && !finished && (
-              <button
-                type="button"
-                onClick={() => setEditing((current) => !current)}
-                aria-label={editing ? "Save transcript edit" : "Edit transcript"}
-                title={editing ? "Save transcript edit" : "Edit transcript"}
-                className="flex items-center gap-1 rounded-md border border-clinical-line px-2 py-1 text-[0.68rem] font-medium text-clinical-muted transition-colors hover:border-teal/40 hover:text-teal"
-              >
-                {editing ? (
-                  <>
-                    <Check className="h-3.5 w-3.5" aria-hidden="true" />
-                    Done
-                  </>
-                ) : (
-                  <>
-                    <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                    Edit
-                  </>
-                )}
-              </button>
+            {pct > 0 && (
+              <>
+                <span aria-hidden="true" className="h-3 w-px bg-clinical-line" />
+                <span className="tnum text-[0.68rem] text-clinical-muted">{pct}%</span>
+              </>
             )}
           </div>
         </div>
@@ -226,55 +204,53 @@ export function DictationPanel({
           ref={scrollRef}
           className="vault-scroll min-h-0 flex-1 overflow-y-auto px-6 pb-4 lg:px-8"
         >
-          {/* ---- RECORDING: animated word-by-word (read-only) ---- */}
+          {/* ---- RECORDING: animated word-by-word (read-only live preview) ---- */}
           {recording ? (
-            <p
-              className="max-w-[62ch] text-[1.02rem] leading-relaxed tracking-[-0.005em] text-clinical-ink"
-              aria-live="polite"
-              aria-atomic="false"
-            >
-              {words.map((w, i) => (
+            <div className="min-h-[140px] pt-1">
+              <p
+                className="max-w-[62ch] text-[1.02rem] leading-relaxed tracking-[-0.005em] text-clinical-ink"
+                aria-live="polite"
+                aria-atomic="false"
+              >
+                {words.map((w, i) => (
+                  <span
+                    key={i}
+                    className={cn("animate-word-in", i >= words.length - 3 && "text-clinical-ink")}
+                  >
+                    {w}{" "}
+                  </span>
+                ))}
                 <span
-                  key={i}
-                  className={cn("animate-word-in", i >= words.length - 3 && "text-clinical-ink")}
-                >
-                  {w}{" "}
-                </span>
-              ))}
-              <span
-                aria-hidden="true"
-                className="animate-caret ml-[1px] inline-block h-[1.05em] w-[2px] translate-y-[2px] bg-coral"
-              />
-            </p>
-          ) : hasText ? (
-            /* ---- PAUSED / DONE: read-only or explicitly editable textarea ---- */
-            <textarea
-              id="transcript-editor"
-              aria-label={editing ? "Transcript — editing" : "Transcript"}
-              value={rawTranscript}
-              onChange={(e) => onTranscriptEdit(e.target.value)}
-              readOnly={!editing || finished || processing}
-              spellCheck={true}
-              className={cn(
-                "w-full max-w-[62ch] resize-none bg-transparent text-[1.02rem] leading-relaxed tracking-[-0.005em] text-clinical-ink outline-none transition-all duration-200",
-                "min-h-[120px] pb-2",
-                !editing || finished || processing
-                  ? "cursor-default select-text"
-                  : "cursor-text rounded-md border border-transparent focus:border-teal/30 focus:bg-teal-soft/30 focus:px-2 focus:py-1",
-              )}
-              style={{ fieldSizing: "content" }}
-            />
-          ) : (
-            /* ---- EMPTY: placeholder ---- */
-            <div className="flex h-full min-h-[120px] items-center">
-              <p className="max-w-[46ch] text-[0.95rem] leading-relaxed text-clinical-muted">
-                Your words appear here as you speak. Dictate the history, findings, impression and advice in one
-                continuous flow — structuring happens afterwards.
+                  aria-hidden="true"
+                  className="animate-caret ml-[1px] inline-block h-[1.05em] w-[2px] translate-y-[2px] bg-coral"
+                />
               </p>
+            </div>
+          ) : (
+            /* ---- ALWAYS EDITABLE TEXTAREA: type anytime, paste, edit speech results ---- */
+            <div className="h-full min-h-[140px]">
+              <textarea
+                id="transcript-editor"
+                aria-label="Clinical notes and transcript editor"
+                placeholder="Type consultation notes directly (e.g. symptoms, history, clinical findings, prescription) or tap the microphone above to speak..."
+                value={rawTranscript}
+                onChange={(e) => onTranscriptEdit(e.target.value)}
+                readOnly={finished || processing}
+                disabled={finished || processing}
+                spellCheck={true}
+                className={cn(
+                  "w-full h-full min-h-[140px] resize-none bg-transparent text-[1.02rem] leading-relaxed tracking-[-0.005em] text-clinical-ink placeholder:text-clinical-muted/60 outline-none transition-all duration-200",
+                  "rounded-md border border-transparent focus:border-teal/30 focus:bg-teal-soft/20 focus:p-2.5",
+                  finished || processing
+                    ? "cursor-default opacity-80"
+                    : "cursor-text hover:border-clinical-line"
+                )}
+              />
             </div>
           )}
         </div>
       </div>
+
 
       {/* finish */}
       <div className="flex items-center justify-between gap-4 border-t border-clinical-line px-6 py-4 lg:px-8">
