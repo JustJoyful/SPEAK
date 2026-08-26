@@ -12,7 +12,7 @@ export class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, errorInfo) {
-    console.error("[MedSync ErrorBoundary] Caught error:", error, errorInfo)
+    console.error("[S.P.E.A.K. ErrorBoundary] Caught error:", error, errorInfo)
   }
 
   render() {

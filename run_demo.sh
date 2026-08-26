@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  MedSync: Zero-Trust Edge Gateway for ABDM Outpatient Consultations
+#  S.P.E.A.K.: Secure Patient Extraction & Anonymization Kernel
+#  Zero-Trust Edge Gateway for ABDM Outpatient Consultations
 #  Live Process & Resource Terminal Dashboard
 # ==============================================================================
 
@@ -12,7 +13,7 @@ cd "$SCRIPT_DIR"
 # ANSI Color Palette & Styling
 BOLD='\033[1m'
 DIM='\033[2m'
-CYAN='\033[38;2;45;212;191m'      # MedSync Teal (#2DD4BF)
+CYAN='\033[38;2;45;212;191m'      # S.P.E.A.K. Teal (#2DD4BF)
 BLUE='\033[38;2;96;165;250m'      # Vault Blue (#60A5FA)
 GREEN='\033[38;2;52;211;153m'     # Verified Green (#34D399)
 YELLOW='\033[38;2;251;191;36m'    # Alert Yellow (#FBBF24)
@@ -27,12 +28,13 @@ LOG_FRONTEND="$SCRIPT_DIR/.frontend.log"
 clear 2>/dev/null || true
 echo -e "${CYAN}${BOLD}"
 cat << "EOF"
-  __  __          _  ____                   
- |  \/  | ___  __| |/ ___| _   _ _ __   ___ 
- | |\/| |/ _ \/ _` |\___ \| | | | '_ \ / __|
- | |  | |  __/ (_| | ___) | |_| | | | | (__ 
- |_|  |_|\___|\__,_||____/ \__, |_| |_|\___|
-                           |___/            
+  ____  ____  _____    _    _  __
+ / ___||  _ \| ____|  / \  | |/ /
+ \___ \| |_) |  _|   / _ \ | ' / 
+  ___) |  __/| |___ / ___ \| . \ 
+ |____/|_|   |_____/_/   \_\_|\_\
+
+ S.P.E.A.K. (Secure Patient Extraction & Anonymization Kernel)
  Zero-Trust ABDM Edge Node · Live Process Dashboard
 EOF
 echo -e "${NC}"
@@ -86,7 +88,7 @@ sleep 0.5
 cleanup() {
   trap - INT TERM EXIT
   echo ""
-  echo -e "${YELLOW}[*] Shutting down MedSync edge processes cleanly...${NC}"
+  echo -e "${YELLOW}[*] Shutting down S.P.E.A.K. edge processes cleanly...${NC}"
   kill -9 -$BACKEND_PID $BACKEND_PID 2>/dev/null || true
   kill -9 -$FRONTEND_PID $FRONTEND_PID 2>/dev/null || true
   fuser -k 8000/tcp 2>/dev/null || true
@@ -127,7 +129,7 @@ while true; do
   tput cup 0 0 2>/dev/null || clear
 
   echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════════════════════════════════════════════╗${NC}"
-  echo -e "${CYAN}║${NC}  ${BOLD}🛡️  MEDSYNC ZERO-TRUST EDGE GATEWAY · LIVE DASHBOARD${NC}                            ${CYAN}║${NC}"
+  echo -e "${CYAN}║${NC}  ${BOLD}🛡️  S.P.E.A.K. ZERO-TRUST EDGE GATEWAY · LIVE DASHBOARD${NC}                             ${CYAN}║${NC}"
   echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════════════════╣${NC}"
   echo -e "${CYAN}║${NC}  ${BOLD}Node Time:${NC} ${TIMESTAMP}   │  ${BOLD}Uptime:${NC} ${ELAPSED_FMT}                              ${CYAN}║${NC}"
   echo -e "${CYAN}║${NC}  ${BOLD}Doctor Desk:${NC} ${GREEN}http://localhost:5173${NC}    │  ${BOLD}API Gateway:${NC} ${BLUE}http://localhost:8000${NC}       ${CYAN}║${NC}"

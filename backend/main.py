@@ -30,8 +30,8 @@ async def lifespan(app: FastAPI):
     stop_sync_poller()
 
 app = FastAPI(
-    title="MedSync API",
-    description="Zero-Trust ABDM-Compliant Healthcare Gateway",
+    title="S.P.E.A.K. API",
+    description="S.P.E.A.K. (Secure Patient Extraction & Anonymization Kernel) — Zero-Trust ABDM-Compliant Healthcare Gateway",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -89,4 +89,4 @@ app.include_router(events_router)
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "message": "MedSync API is running securely."}
+    return {"status": "ok", "message": "S.P.E.A.K. API is running securely."}

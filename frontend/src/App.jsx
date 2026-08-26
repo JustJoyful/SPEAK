@@ -589,15 +589,21 @@ export default function App() {
     <div className="theme-transition flex min-h-screen flex-col bg-clinical lg:h-screen lg:overflow-hidden">
       <header className="grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-clinical-line bg-clinical-surface px-5 py-3 lg:px-6">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-8 w-8 items-center justify-center rounded-md bg-teal text-clinical-surface">
-            <Stethoscope className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden="true" />
-          </span>
-          <div>
-            <h1 className="text-[0.98rem] font-semibold leading-none tracking-[-0.015em] text-clinical-ink">
-              MedSync
-            </h1>
-            <p className="mt-1 text-[0.68rem] leading-none text-clinical-muted">
-              Voice to structured record · Zero-trust edge
+          <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-teal text-clinical-surface shadow-sm">
+            <Stethoscope className="h-[18px] w-[18px]" strokeWidth={2.2} aria-hidden="true" />
+            <span className="absolute -bottom-0.5 -right-0.5 flex h-2 w-2 items-center justify-center rounded-full bg-verified ring-2 ring-clinical-surface" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className="font-mono text-[0.98rem] font-bold leading-none tracking-[0.06em] text-clinical-ink">
+                S.P.E.A.K.
+              </h1>
+              <span className="hidden items-center rounded border border-teal/25 bg-teal-soft px-1.5 py-0.5 font-mono text-[0.6rem] font-medium tracking-wider text-teal md:inline-flex">
+                KERNEL
+              </span>
+            </div>
+            <p className="mt-1 truncate text-[0.66rem] font-medium leading-none text-clinical-muted" title="Secure Patient Extraction & Anonymization Kernel">
+              Secure Patient Extraction &amp; Anonymization Kernel
             </p>
           </div>
         </div>
