@@ -7,7 +7,7 @@ import { ChecklistPanel } from "@/components/ChecklistPanel"
 import { RecordViewer } from "@/components/RecordViewer"
 import { SyncBadge } from "@/components/SyncBadge"
 import { cn } from "@/lib/utils"
-import { CASES, CHECKLIST_ORDER } from "@/lib/cases"
+import { CASES, CHECKLIST_ORDER, extractClinicalChecklist, mergeChecklistState } from "@/lib/cases"
 import { buildPipeline, idleLines, makeRng } from "@/lib/pipeline"
 import { backendConfigured, medSyncApi } from "@/api/client"
 import { usePipelineStream } from "@/hooks/usePipelineStream"
@@ -83,6 +83,10 @@ export default function App() {
 
   const handleExtraction = useCallback(
     async ({ token, text }) => {
+      // 1. Instantaneous zero-latency local clinical pattern matching
+      const localMatches = extractClinicalChecklist(text)
+      setChecks((current) => mergeChecklistState(current, localMatches))
+
       if (backendConfigured) {
         try {
           await medSyncApi.processText(token, { text, language: "en-IN" })
@@ -263,7 +267,7 @@ export default function App() {
     }
     if (event.egress_clean || (event.stage === "MODEL" && level === "info")) setEgressClean(true)
     if (event.checklist) {
-      setChecks((current) => ({ ...current, ...event.checklist }))
+      setChecks((current) => mergeChecklistState(current, event.checklist))
     }
     pushLog({
       stage,
@@ -285,7 +289,7 @@ export default function App() {
   )
 
   const handleWSToggles = useCallback((toggles) => {
-    setChecks((current) => ({ ...current, ...toggles }))
+    setChecks((current) => mergeChecklistState(current, toggles))
   }, [])
 
   const { startStreaming, stopStreaming, audioLevel } = useAudioStreamer(
@@ -475,23 +479,25 @@ export default function App() {
   })
 
   useEffect(() => {
-    if (!words.length) {
+    if (!rawTranscript.trim()) {
       lastMark.current = { symptoms: false, diagnosis: false, medication: false, advice: false }
       return
     }
+
+    const matches = extractClinicalChecklist(rawTranscript)
     CHECKLIST_ORDER.forEach((k) => {
-      const mark = active.marks[k]
-      if (words.length >= mark && !lastMark.current[k]) {
+      if (matches[k] === "checked" && !lastMark.current[k]) {
         lastMark.current[k] = true
-        if (!backendConfigured) {
-          setChecks((prev) => ({ ...prev, [k]: "filling" }))
-          later(() => setChecks((prev) => ({ ...prev, [k]: "checked" })), 620 + Math.random() * 500)
-        }
+        setChecks((prev) => (prev[k] === "checked" ? prev : { ...prev, [k]: "filling" }))
+        later(() => {
+          setChecks((prev) => ({ ...prev, [k]: "checked" }))
+        }, 320 + Math.random() * 200)
+
         pushLog({
           stage: "EXTRACT",
           level: "info",
           spans: [
-            { t: "text", v: `field candidate · ` },
+            { t: "text", v: "field candidate · " },
             { t: "em", v: k },
             { t: "arrow" },
             { t: "text", v: "buffered in enclave" },
@@ -500,7 +506,7 @@ export default function App() {
         })
       }
     })
-  }, [words.length, active.marks, later, pushLog, backendConfigured])
+  }, [rawTranscript, words.length, later, pushLog])
 
   const handleToggle = useCallback(() => {
     if (recording) {
