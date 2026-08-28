@@ -54,14 +54,20 @@ class ActiveEncounterSession:
         entry = get_queue_entry_by_token(token_number, db_path=db_path)
         if not entry:
             raise HTTPException(status_code=404, detail="Token not found")
-            
+
+        if entry.get("status") == "done" or entry.get("sync_status") in ["pending_structuring", "structured", "synced"]:
+            raise HTTPException(
+                status_code=409,
+                detail="Encounter has already been finalized and locked for secure synchronization."
+            )
+
         current = entry["cumulative_transcript"]
         if text.strip():
             if current:
                 current += " " + text.strip()
             else:
                 current = text.strip()
-                
+
         from backend.db.local import update_session_transcript
         update_session_transcript(token_number, current, is_locked=True, db_path=db_path)
         return current

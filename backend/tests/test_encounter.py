@@ -126,3 +126,26 @@ def test_finalize_encounter_with_typed_text(mock_update_transcript, mock_update_
     assert response.json()["status"] == "success"
     mock_update_transcript.assert_any_call(token, "Patient typed clinical history directly.", is_locked=False)
 
+
+def test_append_transcript_rejects_after_finalization():
+    """Verify that attempting to append transcript to a finalized encounter returns 409 Conflict."""
+    token = get_token()
+    from backend.db.local import update_token_status, update_sync_status
+    from backend.session.active_encounter import active_session
+    update_token_status(token, "done", db_path=TEST_DB)
+    update_sync_status(token, "pending_structuring", db_path=TEST_DB)
+
+    # Calling active_session.append_transcript directly on finalized encounter raises 409
+    with pytest.raises(Exception) as exc_info:
+        active_session.append_transcript(token, "Late arriving mock chunk", db_path=TEST_DB)
+    assert exc_info.value.status_code == 409
+
+    # Verify HTTP endpoint returns 409 Conflict
+    with patch("backend.db.local.SQLITE_DB_PATH", TEST_DB):
+        response = client.post(
+            f"/encounter/{token}/transcript",
+            json={"text": "Late speech chunk"},
+            headers={"X-Role": "Doctor"}
+        )
+        assert response.status_code == 409
+

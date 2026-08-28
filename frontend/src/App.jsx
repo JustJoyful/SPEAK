@@ -12,6 +12,7 @@ import { buildPipeline, idleLines, makeRng } from "@/lib/pipeline"
 import { backendConfigured, medSyncApi } from "@/api/client"
 import { usePipelineStream } from "@/hooks/usePipelineStream"
 import { useAudioStreamer } from "@/hooks/useAudioStreamer"
+import { useTranscriptDebouncer } from "@/hooks/useTranscriptDebouncer"
 import { Bug } from "lucide-react"
 
 const EMPTY_CHECKS = { symptoms: "empty", diagnosis: "empty", medication: "empty", advice: "empty" }
@@ -57,8 +58,6 @@ export default function App() {
     Object.fromEntries(CASES.map((c) => [c.token, c.status])),
   )
   const [activeToken, setActiveToken] = useState(CASES[0].token)
-  const [rawTranscript, setRawTranscript] = useState("")
-  const [words, setWords] = useState([])
   const [recording, setRecording] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [finished, setFinished] = useState(false)
@@ -75,6 +74,58 @@ export default function App() {
   const timers = useRef([])
   const seq = useRef(0)
   const queueResizeStart = useRef({ x: 0, width: queueWidth })
+  const mockWordIndexRef = useRef(0)
+
+  const pushLog = useCallback((l) => {
+    seq.current += 1
+    setLogs((prev) => [...prev.slice(-90), { ...l, id: `l${seq.current}`, at: Date.now() }])
+  }, [])
+
+  const handleExtraction = useCallback(
+    async ({ token, text }) => {
+      if (backendConfigured) {
+        try {
+          await medSyncApi.processText(token, { text, language: "en-IN" })
+        } catch (err) {
+          const msg = readableError(err)
+          if (!msg.includes("409") && !msg.includes("423")) {
+            pushLog({
+              stage: "NETWORK",
+              level: "warn",
+              spans: [{ t: "text", v: `Partial sync failed · ${msg}` }],
+            })
+          }
+        }
+      } else {
+        pushLog({
+          stage: "EXTRACT",
+          level: "info",
+          spans: [
+            { t: "text", v: "Edge transcript buffered · " },
+            { t: "em", v: `token #${token}` },
+            { t: "arrow" },
+            { t: "text", v: `${text.split(/\s+/).length} words parsed` },
+          ],
+          metric: `${Math.floor(10 + Math.random() * 12)} ms`,
+        })
+      }
+    },
+    [pushLog],
+  )
+
+  const {
+    rawTranscript,
+    words,
+    ingestDelta,
+    setFullText,
+    cancel: cancelDebounce,
+    reset: resetDebounce,
+    markFinished: markDebouncerFinished,
+  } = useTranscriptDebouncer({
+    activeToken,
+    onExtraction: handleExtraction,
+    isFinished: finished || processing,
+  })
 
   const cases = useMemo(
     () => remoteCases
@@ -148,11 +199,6 @@ export default function App() {
       window.removeEventListener("online", handleOnline)
       window.removeEventListener("offline", handleOffline)
     }
-  }, [])
-
-  const pushLog = useCallback((l) => {
-    seq.current += 1
-    setLogs((prev) => [...prev.slice(-90), { ...l, id: `l${seq.current}`, at: Date.now() }])
   }, [])
 
   const loadQueue = useCallback(() => {
@@ -231,33 +277,32 @@ export default function App() {
 
   usePipelineStream({ enabled: backendConfigured, onEvent: handlePipelineEvent })
 
-  const handleWSTranscript = useCallback((newText) => {
-    setRawTranscript((prev) => {
-      const updated = prev ? prev + " " + newText : newText;
-      setWords(updated.trim() ? updated.trim().split(/\s+/) : []);
-      return updated;
-    });
-  }, []);
+  const handleWSTranscript = useCallback(
+    (newText) => {
+      ingestDelta(newText)
+    },
+    [ingestDelta],
+  )
 
   const handleWSToggles = useCallback((toggles) => {
-    setChecks((current) => ({ ...current, ...toggles }));
-  }, []);
+    setChecks((current) => ({ ...current, ...toggles }))
+  }, [])
 
   const { startStreaming, stopStreaming, audioLevel } = useAudioStreamer(
     activeToken,
     handleWSTranscript,
     handleWSToggles
-  );
+  )
 
   const resetCase = useCallback(
     (token) => {
       clearTimers()
+      cancelDebounce()
+      resetDebounce()
       stopStreaming()
       setRecording(false)
       setProcessing(false)
       setFinished(false)
-      setWords([])
-      setRawTranscript("")
       setElapsed(0)
       setChecks(EMPTY_CHECKS)
       setRedactCount(0)
@@ -279,17 +324,17 @@ export default function App() {
         },
       ])
     },
-    [clearTimers, stopStreaming, backendConfigured],
+    [clearTimers, cancelDebounce, resetDebounce, stopStreaming, backendConfigured],
   )
 
   const handleDiscard = useCallback(() => {
     clearTimers()
+    cancelDebounce()
+    resetDebounce()
     stopStreaming()
     setRecording(false)
     setProcessing(false)
     setFinished(false)
-    setWords([])
-    setRawTranscript("")
     setElapsed(0)
     setChecks(EMPTY_CHECKS)
     setRedactCount(0)
@@ -302,11 +347,13 @@ export default function App() {
       medSyncApi.resetEncounter(activeToken).catch(() => {})
     }
     setLogs(idleLines())
-  }, [clearTimers, stopStreaming, activeToken, backendConfigured])
+  }, [clearTimers, cancelDebounce, resetDebounce, stopStreaming, activeToken, backendConfigured])
 
   const handleSelect = useCallback(
     async (token) => {
       if (token === activeToken) return
+      clearTimers()
+      cancelDebounce()
       stopStreaming()
       setSelectionBusy(token)
 
@@ -354,30 +401,34 @@ export default function App() {
       }
       setSelectionBusy(null)
     },
-    [activeToken, cases, resetCase, pushLog, stopStreaming, backendConfigured],
+    [activeToken, cases, resetCase, cancelDebounce, pushLog, stopStreaming, backendConfigured],
   )
 
   const scriptWords = useMemo(() => active.script.split(/\s+/), [active.script])
 
-
-
   useEffect(() => {
-    if (!recording || !useMockData) return
+    if (!recording || !useMockData) {
+      mockWordIndexRef.current = 0
+      return
+    }
     let cancelled = false
     const rng = makeRng(active.token * 7919)
+    mockWordIndexRef.current = words.length
 
     const tick = () => {
-      if (cancelled) return
-      setWords((prev) => {
-        if (prev.length >= scriptWords.length) {
-          setRecording(false)
-          return prev
-        }
-        const burst = 1 + Math.floor(rng() * 3)
-        const next = scriptWords.slice(0, Math.min(scriptWords.length, prev.length + burst))
-        setRawTranscript(next.join(" "))
-        return next
-      })
+      if (cancelled || finished || processing) return
+      if (mockWordIndexRef.current >= scriptWords.length) {
+        setRecording(false)
+        return
+      }
+      const burstSize = 1 + Math.floor(rng() * 3)
+      const nextSlice = scriptWords.slice(
+        mockWordIndexRef.current,
+        Math.min(scriptWords.length, mockWordIndexRef.current + burstSize),
+      )
+      mockWordIndexRef.current += nextSlice.length
+      ingestDelta(nextSlice.join(" "))
+
       const gap = 100 + rng() * 190
       timers.current.push(window.setTimeout(tick, gap))
     }
@@ -385,7 +436,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [recording, scriptWords, active.token, useMockData])
+  }, [recording, scriptWords, active.token, useMockData, finished, processing, ingestDelta, words.length])
 
   useEffect(() => {
     if (!recording) return
@@ -451,22 +502,6 @@ export default function App() {
     })
   }, [words.length, active.marks, later, pushLog, backendConfigured])
 
-  // Debounced partial transcript upload to trigger edge pipeline (e.g. GLiNER checklist) for both typing and speech
-  useEffect(() => {
-    if (!backendConfigured || !rawTranscript.trim()) return
-    const id = window.setTimeout(() => {
-      medSyncApi.processText(activeToken, { text: rawTranscript, language: "en-IN" })
-        .catch((err) => {
-          pushLog({
-            stage: "NETWORK",
-            level: "warn",
-            spans: [{ t: "text", v: `Partial sync failed · ${readableError(err)}` }],
-          })
-        })
-    }, 800) // 800ms debounce window for typing or live dictation
-    return () => window.clearTimeout(id)
-  }, [backendConfigured, rawTranscript, activeToken, pushLog])
-
   const handleToggle = useCallback(() => {
     if (recording) {
       setRecording(false)
@@ -494,13 +529,17 @@ export default function App() {
     })
   }, [recording, activeToken, pushLog, useMockData, startStreaming, stopStreaming])
 
-  const handleTranscriptEdit = useCallback((text) => {
-    setRawTranscript(text)
-    setWords(text.trim() ? text.trim().split(/\s+/) : [])
-  }, [])
+  const handleTranscriptEdit = useCallback(
+    (text) => {
+      setFullText(text)
+    },
+    [setFullText],
+  )
 
   const handleFinish = useCallback(async () => {
     if (!words.length || processing || finished) return
+    markDebouncerFinished()
+    clearTimers()
     setFinishError("")
     setProcessing(true)
     setSeam(true)
