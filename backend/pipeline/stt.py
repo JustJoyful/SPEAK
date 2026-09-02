@@ -115,18 +115,16 @@ DEMO_SEEDED_PROMPT = (
 def build_clinical_prompt(patient_name: str = "", complaint: str = "") -> str:
     """Builds a demo-seeded initial_prompt conditioned on the active patient.
 
-    The base prompt (DEMO_SEEDED_PROMPT) biases Whisper's attention toward
-    every drug, name, and term present in the demo queue. The patient-specific
-    prefix adds a second bias layer for the current active patient so their
-    name and chief complaint are the most recently seen tokens — i.e., the
-    highest-probability tokens in the attention head when decoding starts.
+    The heavy generic dictionary (DEMO_SEEDED_PROMPT) is placed FIRST.
+    The active patient context is placed at the absolute END so that if the string
+    exceeds Whisper's 224-token prompt context window, truncation chops off generic
+    text from the front while preserving the active patient's name and complaint.
     """
-    parts = []
+    parts = [DEMO_SEEDED_PROMPT]
     if patient_name and patient_name.strip():
         parts.append(f"Patient: {patient_name.strip()}.")
     if complaint and complaint.strip():
         parts.append(f"Chief complaint: {complaint.strip()}.")
-    parts.append(DEMO_SEEDED_PROMPT)
     return " ".join(parts)
 
 
@@ -135,8 +133,6 @@ class AudioStreamSession:
     Stateful streaming audio session for WebSocket ingestion.
 
     Maintains a rolling float32 PCM buffer (16 kHz mono).
-    Absorbs the first 400ms (6,400 samples) of audio as a warm-up drop to eliminate
-    hardware mic switch pops and electrical DC offsets.
     Throttles Silero neural VAD evaluation to >= 512ms chunks to eliminate CPU death-loops.
     Slices and transcribes only upon confirmed phrase boundaries (speech followed by >= 500ms
     of trailing silence). Safely shifts the buffer to preserve natural leading context.
@@ -144,17 +140,31 @@ class AudioStreamSession:
 
     def __init__(self, stt_engine: "RealtimeSTT", initial_prompt: str = ""):
         self.stt = stt_engine
-        self.prompt = initial_prompt or DEMO_SEEDED_PROMPT
+        self.base_prompt = initial_prompt or DEMO_SEEDED_PROMPT
+        self.prompt = self.base_prompt
+        self.override_name: str = ""
         self.buffer: np.ndarray = np.array([], dtype=np.float32)
         self.last_eval_length: int = 0
-        # Warm-up drop: 400ms (6,400 samples at 16 kHz) discarded to eliminate initialization pops
-        self.warmup_samples_remaining: int = 6400
         self.vad_options = VadOptions(
             threshold=0.40,
             min_speech_duration_ms=100,
             min_silence_duration_ms=500,
             speech_pad_ms=150,
         )
+
+    def update_override(self, override_name: str) -> None:
+        """
+        Dynamically prime Whisper attention prefix for an unscheduled patient.
+        Places the override patient at the END of the prompt so it survives truncation.
+        """
+        name = override_name.strip()
+        if not name:
+            self.override_name = ""
+            self.prompt = self.base_prompt
+            return
+        self.override_name = name
+        self.prompt = f"{self.base_prompt} Patient: {name}. Consultation for {name}.".strip()
+        logger.info("Attention biased at end of prompt for unscheduled encounter: '%s'", name)
 
     def add_chunk(self, pcm_bytes: bytes) -> list[str]:
         """
@@ -169,16 +179,6 @@ class AudioStreamSession:
             pcm_bytes = pcm_bytes[:len(pcm_bytes) - 1]
         if not pcm_bytes:
             return []
-
-        # Step 0: Warm-up drop — discard hardware mic switch pops upon session start
-        if self.warmup_samples_remaining > 0:
-            samples_in_chunk = len(pcm_bytes) // 2
-            if samples_in_chunk <= self.warmup_samples_remaining:
-                self.warmup_samples_remaining -= samples_in_chunk
-                return []
-            drop_bytes = self.warmup_samples_remaining * 2
-            pcm_bytes = pcm_bytes[drop_bytes:]
-            self.warmup_samples_remaining = 0
 
         # Convert int16 bytes to normalized float32
         chunk_np = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
@@ -214,7 +214,10 @@ class AudioStreamSession:
             # Extract the speech block up to the confirmed end of speech
             speech_segment = self.buffer[:last_end]
 
-            text = self.stt.transcribe_segment(speech_segment, initial_prompt=self.prompt)
+            text = self.stt.transcribe_segment(
+                speech_segment,
+                initial_prompt=self.prompt,
+            )
             if text:
                 transcripts.append(text)
 
@@ -239,7 +242,10 @@ class AudioStreamSession:
         if timestamps:
             last_end = timestamps[-1]["end"]
             speech_segment = self.buffer[:last_end] if last_end > 0 else self.buffer
-            text = self.stt.transcribe_segment(speech_segment, initial_prompt=self.prompt)
+            text = self.stt.transcribe_segment(
+                speech_segment,
+                initial_prompt=self.prompt,
+            )
 
         self.buffer = np.array([], dtype=np.float32)
         self.last_eval_length = 0
@@ -281,7 +287,7 @@ class RealtimeSTT:
     def transcribe_segment(
         self,
         audio_np: np.ndarray,
-        initial_prompt: Optional[str] = None
+        initial_prompt: Optional[str] = None,
     ) -> str:
         """
         Run faster-whisper on a Float32 NumPy array at 16 000 Hz mono.
@@ -293,18 +299,18 @@ class RealtimeSTT:
         prompt = initial_prompt or DEMO_SEEDED_PROMPT
 
         # Decoder configuration:
-        # beam_size=1: strict greedy decoding, eliminates random hallucination exploration.
-        # temperature=0.0: greedy decoding.
-        # condition_on_previous_text=False: resets context between phrases to kill loops.
+        # beam_size=2: evaluates candidate paths for proper nouns and accented speech.
+        # temperature=0.0: greedy decoding across the beam.
+        # condition_on_previous_text=False: resets context between phrases to prevent loops.
+        # vad_filter=False: audio is already segmented by Silero VAD in AudioStreamSession.
         # compression_ratio_threshold=1.8: drops repetitive character/word loops.
         # no_speech_threshold=0.60: reliable speech confidence gate.
         # log_prob_threshold=-1.6: relaxed for int8 quantization and fast Indian English cadence.
         segments, _info = self.model.transcribe(
             audio_np,
             language="en",
-            vad_filter=True,
-            vad_parameters=self.vad_parameters,
-            beam_size=1,
+            vad_filter=False,
+            beam_size=2,
             temperature=0.0,
             initial_prompt=prompt,
             condition_on_previous_text=False,
