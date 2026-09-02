@@ -707,7 +707,7 @@ export default function App() {
       )}
 
       <main
-        className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[var(--queue-width)_minmax(0,1fr)_13px_360px] xl:grid-cols-[var(--queue-width)_minmax(0,1fr)_13px_396px]"
+        className="grid min-h-0 flex-1 grid-cols-1 bg-clinical lg:grid-cols-[var(--queue-width)_minmax(0,1fr)_13px_360px] xl:grid-cols-[var(--queue-width)_minmax(0,1fr)_13px_396px]"
         style={{ "--queue-width": `${queueWidth}px` }}
       >
         <div className="relative min-w-0">

@@ -39,7 +39,7 @@ export function XrayLog({ lines, phase, busy, redactCount, egressClean }) {
   }, [lines.length])
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col bg-vault">
       {/* header */}
       <div className="flex items-center justify-between gap-3 border-b border-vault-line px-4 py-3">
         <div className="flex items-center gap-2.5">
@@ -68,7 +68,7 @@ export function XrayLog({ lines, phase, busy, redactCount, egressClean }) {
       </div>
 
       {/* counters */}
-      <div className="grid grid-cols-3 divide-x divide-vault-line border-b border-vault-line">
+      <div className="grid grid-cols-3 divide-x divide-vault-line border-b border-vault-line bg-vault-raised/60">
         <Counter label="redacted" value={String(redactCount).padStart(2, "0")} tone={redactCount ? "warn" : "dim"} />
         <Counter label="egress PII" value={egressClean ? "00" : "--"} tone={egressClean ? "ok" : "dim"} />
         <Counter
