@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Mic, Square, Check, RotateCcw, Loader2, Pencil } from "lucide-react"
+import { Mic, Square, Check, RotateCcw, Loader2, Pencil, Search, X, Zap, UserPlus, ArrowRight } from "lucide-react"
 import { cn, clock } from "@/lib/utils"
 
 const BAR_COUNT = 28
 
 export function DictationPanel({
   active,
+  cases,
+  onSelectCase,
+  activeOverrideName,
+  onStartUnscheduled,
+  onClearOverride,
   words,
   rawTranscript,
   recording,
@@ -21,8 +26,48 @@ export function DictationPanel({
   useMockData
 }) {
   const scrollRef = useRef(null)
+  const searchInputRef = useRef(null)
   const [editing, setEditing] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
   const hasText = Boolean(rawTranscript && rawTranscript.trim().length > 0) || words.length > 0
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault()
+        searchInputRef.current?.focus()
+      }
+      if (e.key === "Escape") {
+        setSearchQuery("")
+        searchInputRef.current?.blur()
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [])
+
+  const trimmedSearch = searchQuery.trim().toLowerCase()
+  const matchingCases = useMemo(() => {
+    if (!trimmedSearch) return []
+    return (cases || []).filter((c) => {
+      const name = (c.name || "").toLowerCase()
+      const token = String(c.token || "")
+      return name.includes(trimmedSearch) || token === trimmedSearch
+    })
+  }, [cases, trimmedSearch])
+
+  const handleSearchKeyDown = (e) => {
+    if (e.key === "Enter" && searchQuery.trim()) {
+      e.preventDefault()
+      if (matchingCases.length === 1) {
+        onSelectCase?.(matchingCases[0].token)
+        setSearchQuery("")
+      } else {
+        onStartUnscheduled?.(searchQuery.trim())
+        setSearchQuery("")
+      }
+    }
+  }
 
   useEffect(() => {
     const el = scrollRef.current
@@ -45,6 +90,109 @@ export function DictationPanel({
 
   return (
     <section className="flex min-h-0 flex-col bg-clinical-surface">
+      {/* Quick Search / Unscheduled Override Bar */}
+      <div className="relative border-b border-clinical-line bg-clinical/40 px-6 py-2.5 lg:px-8">
+        <div className="relative max-w-xl">
+          <div className="flex items-center gap-2 rounded-md border border-clinical-line bg-clinical-surface px-3 py-1.5 text-xs shadow-xs transition-colors focus-within:border-teal/50 focus-within:ring-1 focus-within:ring-teal/30">
+            <Search className="h-3.5 w-3.5 text-clinical-muted shrink-0" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              placeholder="Search queue or type patient name for instant walk-in override..."
+              className="w-full bg-transparent text-xs text-clinical-ink placeholder:text-clinical-muted/70 focus:outline-hidden"
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="text-clinical-muted hover:text-clinical-ink"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : (
+              <kbd className="hidden sm:inline-flex items-center rounded border border-clinical-line bg-clinical px-1.5 py-0.5 text-[0.65rem] font-mono text-clinical-muted">
+                ⌘K
+              </kbd>
+            )}
+          </div>
+
+          {/* Search Dropdown / Unscheduled Action Banner */}
+          {searchQuery.trim() && (
+            <div className="absolute left-0 right-0 top-full z-30 mt-1.5 overflow-hidden rounded-lg border border-clinical-line bg-clinical-surface p-2 shadow-lg">
+              {matchingCases.length > 0 ? (
+                <div className="space-y-1">
+                  <div className="px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-wider text-clinical-muted">
+                    Scheduled Patients ({matchingCases.length})
+                  </div>
+                  {matchingCases.map((c) => (
+                    <button
+                      key={c.token}
+                      type="button"
+                      onClick={() => {
+                        onSelectCase?.(c.token)
+                        setSearchQuery("")
+                      }}
+                      className="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-clinical"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="rounded bg-teal-soft px-1.5 py-0.5 text-[0.65rem] font-semibold text-teal">
+                          #{c.token}
+                        </span>
+                        <span className="font-medium text-clinical-ink">{c.name}</span>
+                        <span className="text-[0.7rem] text-clinical-muted">{c.complaint || ""}</span>
+                      </div>
+                      <ArrowRight className="h-3.5 w-3.5 text-clinical-muted" />
+                    </button>
+                  ))}
+                  <div className="my-1 border-t border-clinical-line" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onStartUnscheduled?.(searchQuery.trim())
+                      setSearchQuery("")
+                    }}
+                    className="flex w-full items-center justify-between rounded-md bg-amber-500/10 px-2.5 py-2 text-left text-xs font-medium text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
+                  >
+                    <div className="flex items-center gap-2">
+                      <UserPlus className="h-3.5 w-3.5" />
+                      <span>Start Unscheduled Encounter for <strong>"{searchQuery.trim()}"</strong></span>
+                    </div>
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-2">
+                  <div className="flex items-center gap-2 text-xs text-clinical-ink">
+                    <UserPlus className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span>
+                      Patient not found. Start Unscheduled Encounter for{" "}
+                      <strong className="font-semibold text-amber-700 dark:text-amber-400">
+                        "{searchQuery.trim()}"
+                      </strong>
+                      ?
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onStartUnscheduled?.(searchQuery.trim())
+                      setSearchQuery("")
+                    }}
+                    className="flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-amber-500 shrink-0"
+                  >
+                    <span>Start Unscheduled Encounter</span>
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* patient header */}
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-clinical-line px-6 pb-4 pt-5 lg:px-8">
         <div className="min-w-0">
@@ -55,6 +203,20 @@ export function DictationPanel({
             <span className="text-[0.68rem] font-medium uppercase tracking-[0.09em] text-clinical-muted">
               Consultation
             </span>
+            {activeOverrideName && (
+              <div className="flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[0.68rem] font-medium text-amber-700 dark:text-amber-400 animate-pulse">
+                <Zap className="h-3 w-3 fill-amber-500 text-amber-500" />
+                <span>Attention Biased: "{activeOverrideName}"</span>
+                <button
+                  type="button"
+                  onClick={onClearOverride}
+                  title="Clear override"
+                  className="ml-1 text-clinical-muted hover:text-coral transition-colors"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
           </div>
           <h1 className="mt-2 flex items-baseline gap-2.5 text-[1.55rem] font-semibold leading-none tracking-[-0.02em] text-clinical-ink">
             {active?.name ?? (active ? `Token ${active.token}` : "No patient selected")}
