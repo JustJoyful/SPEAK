@@ -1,7 +1,8 @@
 import asyncio
 import json
-from fastapi import APIRouter, Depends, HTTPException, Body, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Body, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from typing import Dict, Any, Optional
 
 from backend.routes.auth_deps import verify_doctor
@@ -10,7 +11,7 @@ from backend.pipeline.checklist import extract_checklist
 from backend.events.bus import event_bus
 from backend.pipeline.llm_structurer import sadiesink
 from backend.pipeline.crypto import encrypt_fhir_bundle
-from backend.db.local import get_queue_entry_by_token, update_token_status
+from backend.db.local import get_queue_entry_by_token, update_token_status, create_unscheduled_patient
 from backend.pipeline.pii_mask import global_pii_masker
 
 router = APIRouter(
@@ -21,6 +22,34 @@ router = APIRouter(
     # Instead, verify_doctor is applied per HTTP endpoint, and the WebSocket
     # authenticates via a ?role= query parameter.
 )
+
+class UnscheduledPatientRequest(BaseModel):
+    patient_name: str
+    chief_complaint: Optional[str] = "Unscheduled walk-in consultation"
+
+@router.post("/unscheduled", dependencies=[Depends(verify_doctor)])
+async def create_unscheduled_encounter(data: UnscheduledPatientRequest):
+    """Creates an immediate walk-in patient encounter and binds it as in-progress."""
+    name = data.patient_name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Patient name cannot be empty")
+
+    complaint = (data.chief_complaint or "").strip() or "Unscheduled walk-in consultation"
+    entry = create_unscheduled_patient(name, chief_complaint=complaint)
+    token_number = entry["token_number"]
+
+    # Select token and initialize session
+    active_session.select_token(token_number, force=True)
+    event_bus.log_audit_event(
+        "UNSCHEDULED_ENCOUNTER",
+        f"Unscheduled encounter created for '{name}' with token #{token_number}.",
+        "Doctor"
+    )
+    return {
+        "status": "success",
+        "token_number": token_number,
+        "queue_entry": entry,
+    }
 
 @router.post("/{token_number}/select", dependencies=[Depends(verify_doctor)])
 async def select_patient(token_number: int):
@@ -69,12 +98,19 @@ async def stream_checklist(token_number: int):
 
 
 @router.websocket("/{token_number}/audio-stream")
-async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
+async def stream_audio(
+    websocket: WebSocket,
+    token_number: int,
+    role: str = "",
+    override_name: Optional[str] = Query(None)
+):
     """
     Receive raw PCM int16 audio at 16 kHz mono and stream back transcript chunks.
 
     Authentication: The browser WebSocket API cannot send custom headers, so role
     is passed as a query parameter (?role=doctor) by the frontend instead.
+    Supports bi-directional text control messages (e.g. OVERRIDE_PATIENT) for
+    hotword and attention biasing.
     """
     if role.lower() != "doctor":
         await websocket.close(code=1008, reason="Forbidden: Doctor role required")
@@ -90,31 +126,52 @@ async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
 
     # Look up patient context to condition Whisper decoder for high phonetic accuracy
     entry = get_queue_entry_by_token(token_number)
-    patient_name = entry.get("patient_display_name", "") if entry else ""
+    patient_name = override_name or (entry.get("patient_display_name", "") if entry else "")
     complaint = entry.get("chief_complaint", "") if entry else ""
     clinical_prompt = build_clinical_prompt(patient_name, complaint)
 
     # Initialize stateful neural VAD stream session
     session = stt.create_stream_session(clinical_prompt)
+    if override_name and override_name.strip():
+        session.update_override(override_name.strip())
 
     try:
         while True:
-            data = await websocket.receive_bytes()
-            transcripts = await asyncio.to_thread(session.add_chunk, data)
-            for text in transcripts:
-                if not text:
-                    continue
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                raise WebSocketDisconnect(message.get("code", 1000))
 
-                active_session.append_transcript(token_number, text)
-                state = active_session.get_current_state(token_number)
-                cumulative = state.get("transcript", "")
-                checklist, _ = await extract_checklist(cumulative)
+            if message.get("bytes"):
+                data = message["bytes"]
+                transcripts = await asyncio.to_thread(session.add_chunk, data)
+                for text in transcripts:
+                    if not text:
+                        continue
 
-                await websocket.send_json({
-                    "type": "TRANSCRIPT_CHUNK",
-                    "text": text,
-                    "ui_toggles": checklist.model_dump() if checklist else {}
-                })
+                    active_session.append_transcript(token_number, text)
+                    state = active_session.get_current_state(token_number)
+                    cumulative = state.get("transcript", "")
+                    checklist, _ = await extract_checklist(cumulative)
+
+                    await websocket.send_json({
+                        "type": "TRANSCRIPT_CHUNK",
+                        "text": text,
+                        "ui_toggles": checklist.model_dump() if checklist else {}
+                    })
+
+            elif message.get("text"):
+                try:
+                    payload = json.loads(message["text"])
+                    if payload.get("type") == "OVERRIDE_PATIENT":
+                        new_name = str(payload.get("name", "")).strip()
+                        if new_name:
+                            session.update_override(new_name)
+                            await websocket.send_json({
+                                "type": "HOTWORDS_ACTIVE",
+                                "hotwords": new_name
+                            })
+                except Exception:
+                    pass
 
     except WebSocketDisconnect:
         # Flush any remaining audio in the session buffer on disconnect
