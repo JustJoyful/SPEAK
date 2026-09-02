@@ -35,7 +35,7 @@ export function buildPipeline(c, transcript, seed) {
   const j = (base, spread = 0.45) => Math.round(base * (1 - spread / 2 + rng() * spread))
   const words = transcript.trim().split(/\s+/).filter(Boolean).length
   const bytes = new TextEncoder().encode(transcript).length
-  const entities = c.pii.length
+  const entities = (c?.pii || []).length
   const steps = []
 
   steps.push({
@@ -82,7 +82,7 @@ export function buildPipeline(c, transcript, seed) {
     metric: `${j(210)} ms`,
   })
 
-  c.pii.forEach((p, i) => {
+  ;(c?.pii || []).forEach((p, i) => {
     const shown = p.raw.length > 26 ? p.raw.slice(0, 24) + "…" : p.raw
     steps.push({
       stage: "PII",

@@ -7,7 +7,7 @@ import { ChecklistPanel } from "@/components/ChecklistPanel"
 import { RecordViewer } from "@/components/RecordViewer"
 import { SyncBadge } from "@/components/SyncBadge"
 import { cn } from "@/lib/utils"
-import { CASES, CHECKLIST_ORDER, extractClinicalChecklist, mergeChecklistState } from "@/lib/cases"
+import { CHECKLIST_ORDER, extractClinicalChecklist, mergeChecklistState } from "@/lib/cases"
 import { buildPipeline, idleLines, makeRng } from "@/lib/pipeline"
 import { backendConfigured, medSyncApi } from "@/api/client"
 import { usePipelineStream } from "@/hooks/usePipelineStream"
@@ -54,10 +54,8 @@ export default function App() {
   const [queueError, setQueueError] = useState("")
   const [finishError, setFinishError] = useState("")
   const [selectionBusy, setSelectionBusy] = useState(null)
-  const [statuses, setStatuses] = useState(() =>
-    Object.fromEntries(CASES.map((c) => [c.token, c.status])),
-  )
-  const [activeToken, setActiveToken] = useState(CASES[0].token)
+  const [statuses, setStatuses] = useState({})
+  const [activeToken, setActiveToken] = useState(null)
   const [recording, setRecording] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [finished, setFinished] = useState(false)
@@ -132,13 +130,11 @@ export default function App() {
   })
 
   const cases = useMemo(
-    () => remoteCases
-      ? remoteCases.map((c) => ({ ...c, status: statuses[c.token] ?? c.status }))
-      : CASES.map((c) => ({ ...c, status: statuses[c.token] ?? c.status })),
+    () => (remoteCases ?? []).map((c) => ({ ...c, status: statuses[c.token] ?? c.status })),
     [remoteCases, statuses],
   )
   const active = useMemo(
-    () => cases.find((c) => c.token === activeToken) ?? cases[0] ?? CASES[0],
+    () => cases.find((c) => c.token === activeToken) ?? cases[0] ?? null,
     [activeToken, cases],
   )
 
@@ -212,28 +208,28 @@ export default function App() {
     return medSyncApi.getQueue()
       .then((payload) => {
         const rows = Array.isArray(payload) ? payload : payload.queue ?? []
-        const next = rows.map((row) => {
-          const token = Number(row.token_number ?? row.token)
-          if (!Number.isFinite(token) || token <= 0) return null
-          const demo = CASES.find((c) => c.token === token) ?? {}
-          return {
-            ...demo,
-            ...row,
-            token,
-            name: row.patient_display_name ?? row.name ?? demo.name ?? `Token ${token}`,
-            status: row.status ?? demo.status ?? "waiting",
-            age: row.age ?? demo.age,
-            sex: row.sex ?? demo.sex,
-            complaint: row.complaint ?? row.chief_complaint ?? demo.complaint ?? "",
-            script: row.script ?? demo.script ?? "",
-            marks: row.marks ?? demo.marks ?? {},
-            pii: row.pii ?? demo.pii ?? [],
-            fhir: row.fhir ?? demo.fhir ?? null,
-          }
-        }).filter(Boolean)
+        const next = rows
+          .map((row) => {
+            const token = Number(row.token_number ?? row.token)
+            if (!Number.isFinite(token) || token <= 0) return null
+            return {
+              ...row,
+              token,
+              name: row.patient_display_name ?? row.name ?? `Token ${token}`,
+              status: row.status ?? "waiting",
+              age: row.age,
+              sex: row.sex,
+              complaint: row.complaint ?? row.chief_complaint ?? "",
+              script: row.script ?? "",
+              marks: row.marks ?? {},
+              pii: row.pii ?? [],
+              fhir: row.fhir ?? null,
+            }
+          })
+          .filter(Boolean)
         if (next.length) {
           setRemoteCases(next)
-          setActiveToken((token) => next.some((item) => item.token === token) ? token : next[0].token)
+          setActiveToken((token) => (next.some((item) => item.token === token) ? token : next[0].token))
           setStatuses(Object.fromEntries(next.map((item) => [item.token, item.status])))
         }
       })
@@ -243,7 +239,7 @@ export default function App() {
         pushLog({
           stage: "NETWORK",
           level: "warn",
-          spans: [{ t: "text", v: `Backend queue unavailable · ${message} · local demo retained` }],
+          spans: [{ t: "text", v: `Backend queue unavailable · ${message}` }],
         })
       })
       .finally(() => {
@@ -408,7 +404,10 @@ export default function App() {
     [activeToken, cases, resetCase, cancelDebounce, pushLog, stopStreaming, backendConfigured],
   )
 
-  const scriptWords = useMemo(() => active.script.split(/\s+/), [active.script])
+  const scriptWords = useMemo(
+    () => (active?.script ? active.script.split(/\s+/).filter(Boolean) : []),
+    [active?.script],
+  )
 
   useEffect(() => {
     if (!recording || !useMockData) {
@@ -416,7 +415,7 @@ export default function App() {
       return
     }
     let cancelled = false
-    const rng = makeRng(active.token * 7919)
+    const rng = makeRng((active?.token ?? 1) * 7919)
     mockWordIndexRef.current = words.length
 
     const tick = () => {
@@ -440,7 +439,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [recording, scriptWords, active.token, useMockData, finished, processing, ingestDelta, words.length])
+  }, [recording, scriptWords, active?.token, useMockData, finished, processing, ingestDelta, words.length])
 
   useEffect(() => {
     if (!recording) return
@@ -543,14 +542,14 @@ export default function App() {
   )
 
   const handleFinish = useCallback(async () => {
-    if (!words.length || processing || finished) return
+    const transcript = (rawTranscript || words.join(" ")).trim()
+    if (!transcript || processing || finished) return
     markDebouncerFinished()
     clearTimers()
     setFinishError("")
     setProcessing(true)
     setSeam(true)
     if (!useMockData) stopStreaming()
-    const transcript = words.join(" ")
 
     if (backendConfigured && !useMockData) {
       try {
@@ -587,7 +586,7 @@ export default function App() {
     }
 
     // --- Local mock path ---
-    const steps = buildPipeline(active, transcript, (active?.token || activeToken) * 104729)
+    const steps = buildPipeline(active || {}, transcript, (active?.token || activeToken || 1) * 104729)
 
     let t = 0
     steps.forEach((s) => {
@@ -625,7 +624,7 @@ export default function App() {
         advice: active?.fhir?.advice || ["Follow-up as required"],
       })
     }, t + 320)
-  }, [words, processing, finished, active, activeToken, later, pushLog, useMockData, stopStreaming])
+  }, [rawTranscript, words, processing, finished, active, activeToken, later, pushLog, useMockData, stopStreaming, markDebouncerFinished, clearTimers])
 
   const busy = processing || recording
   const doneCount = cases.filter((c) => c.status === "done").length

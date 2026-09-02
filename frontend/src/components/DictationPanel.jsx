@@ -40,8 +40,8 @@ export function DictationPanel({
   )
 
   const wordCount = rawTranscript.trim() ? rawTranscript.trim().split(/\s+/).length : words.length
-  const totalWords = active.script.split(/\s+/).length
-  const pct = Math.min(100, Math.round((wordCount / totalWords) * 100))
+  const totalWords = active?.script ? active.script.split(/\s+/).filter(Boolean).length : 1
+  const pct = Math.min(100, Math.round((wordCount / Math.max(1, totalWords)) * 100))
 
   return (
     <section className="flex min-h-0 flex-col bg-clinical-surface">
@@ -50,17 +50,18 @@ export function DictationPanel({
         <div className="min-w-0">
           <div className="flex items-center gap-2.5">
             <span className="tnum rounded-md bg-teal-soft px-2 py-[3px] text-[0.7rem] font-semibold text-teal">
-              Token #{active.token}
+              Token #{active?.token ?? "-"}
             </span>
             <span className="text-[0.68rem] font-medium uppercase tracking-[0.09em] text-clinical-muted">
               Consultation
             </span>
           </div>
           <h1 className="mt-2 flex items-baseline gap-2.5 text-[1.55rem] font-semibold leading-none tracking-[-0.02em] text-clinical-ink">
-            {active.name}
+            {active?.name ?? (active ? `Token ${active.token}` : "No patient selected")}
             <span className="tnum text-[0.9rem] font-normal tracking-normal text-clinical-muted">
-              {active.age}
-              {active.sex} · {active.complaint}
+              {active?.age ? `${active.age}` : ""}
+              {active?.sex ? `${active.sex} · ` : ""}
+              {active?.complaint || ""}
             </span>
           </h1>
         </div>

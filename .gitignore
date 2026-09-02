@@ -42,4 +42,3 @@ frontend/dist/
 frontend/.vite/
 .agent-context/
 lastwork.md
-frontend/src/patients.json
