@@ -44,7 +44,7 @@ export function DictationPanel({
   const pct = Math.min(100, Math.round((wordCount / Math.max(1, totalWords)) * 100))
 
   return (
-    <section className="flex min-h-0 flex-col bg-clinical-surface">
+    <section className="flex min-h-0 flex-col bg-clinical-surface lg:border-x lg:border-clinical-line/60">
       {/* patient header */}
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-clinical-line px-6 pb-4 pt-5 lg:px-8">
         <div className="min-w-0">
@@ -178,7 +178,7 @@ export function DictationPanel({
 
       {/* transcript & typing box */}
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex items-center justify-between gap-3 px-6 pb-2 pt-4 lg:px-8">
+        <div className="flex items-center justify-between gap-3 border-t border-clinical-line/70 bg-clinical-surface/60 px-6 pb-2 pt-4 lg:px-8">
           <div className="flex items-center gap-2">
             <h3 className="text-[0.66rem] font-semibold uppercase tracking-[0.1em] text-clinical-muted">
               Clinical Notes & Transcript

@@ -294,6 +294,30 @@
   }
 }
 
+/* Panel refinements */
+@media (min-width: 1024px) {
+  main > aside,
+  main > div > aside {
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-clinical-line) 35%, transparent);
+  }
+}
+
+@media (max-width: 1023px) {
+  main {
+    min-height: auto;
+  }
+
+  main > aside {
+    min-height: 420px;
+  }
+}
+
+button:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--color-teal);
+  outline-offset: 3px;
+}
+
 /* Vault scrollbar */
 .vault-scroll::-webkit-scrollbar {
   width: 6px;
