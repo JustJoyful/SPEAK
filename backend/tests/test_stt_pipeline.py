@@ -33,9 +33,9 @@ def test_build_clinical_prompt_defaults():
 
 
 def test_build_clinical_prompt_dynamic_patient():
-    """Verify dynamic prompt prepends patient name and chief complaint before the demo seed."""
+    """Verify dynamic prompt appends patient name and chief complaint after the demo seed to survive truncation."""
     prompt = build_clinical_prompt(patient_name="Meena Devi", complaint="Follow-up, diabetes")
-    assert prompt.startswith("Patient: Meena Devi. Chief complaint: Follow-up, diabetes.")
+    assert prompt.endswith("Patient: Meena Devi. Chief complaint: Follow-up, diabetes.")
     # Demo seed terms must still be present
     assert "pregabalin" in prompt
     assert "metformin" in prompt
@@ -53,7 +53,7 @@ def test_transcribe_empty_segment():
 
 @pytest.mark.asyncio
 async def test_async_worker_offload():
-    """Verify that transcription executes with greedy beam_size=1 and compression_ratio_threshold=1.8."""
+    """Verify that transcription executes with beam_size=2 and compression_ratio_threshold=1.8."""
     stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
 
     custom_prompt = build_clinical_prompt("Rahul Sharma", "Fever, 3 days")
@@ -71,32 +71,22 @@ async def test_async_worker_offload():
         _, kwargs = mock_transcribe.call_args
         assert kwargs["initial_prompt"] == custom_prompt
         assert kwargs["condition_on_previous_text"] is False
-        assert kwargs["beam_size"] == 1
+        assert kwargs["beam_size"] == 2
+        assert kwargs["vad_filter"] is False
         assert kwargs["no_speech_threshold"] == 0.60
         assert kwargs["log_prob_threshold"] == -1.6
         assert kwargs["compression_ratio_threshold"] == 1.8
         assert kwargs["temperature"] == 0.0   # scalar, not a list
 
 
-def test_warmup_drop_discards_first_400ms():
-    """Verify that AudioStreamSession absorbs the first 400ms (6400 samples) to kill mic switch pops."""
+def test_immediate_audio_ingestion_no_warmup_drop():
+    """Verify that AudioStreamSession ingests audio immediately from sample 0 without dropping onset speech."""
     stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
     session = stt.create_stream_session()
 
-    # Send 200ms of pop noise (3200 samples = 6400 bytes)
-    pop_200ms = (np.random.randn(3200).astype(np.float32) * 0.9 * 32768).astype(np.int16).tobytes()
-    res = session.add_chunk(pop_200ms)
-    assert res == []
-    assert len(session.buffer) == 0  # 0 samples appended
-    assert session.warmup_samples_remaining == 3200
-
-    # Send another 300ms (4800 samples = 9600 bytes)
-    audio_300ms = (np.random.randn(4800).astype(np.float32) * 0.05 * 32768).astype(np.int16).tobytes()
-    res = session.add_chunk(audio_300ms)
-    assert res == []
-    # 3200 samples consumed for warmup, remaining 1600 samples appended to buffer
-    assert len(session.buffer) == 1600
-    assert session.warmup_samples_remaining == 0
+    audio_200ms = (np.random.randn(3200).astype(np.float32) * 0.1 * 32768).astype(np.int16).tobytes()
+    session.add_chunk(audio_200ms)
+    assert len(session.buffer) == 3200
 
 
 def test_transient_filler_words_dropped_on_short_burst():
@@ -305,4 +295,47 @@ def test_add_chunk_odd_bytes_no_crash():
     assert res2 == []
     # Send empty bytes
     assert session.add_chunk(b"") == []
+
+
+def test_audio_stream_session_update_override():
+    """Verify update_override appends patient attention bias to the end of prompt."""
+    stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
+    session = AudioStreamSession(stt)
+    assert session.override_name == ""
+
+    session.update_override("Venkatraman")
+    assert session.override_name == "Venkatraman"
+    assert session.prompt.endswith("Patient: Venkatraman. Consultation for Venkatraman.")
+
+
+def test_transcribe_segment_uses_beam_and_no_redundant_vad():
+    """Verify that transcribe_segment uses beam_size=2 and vad_filter=False."""
+    stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
+    with patch.object(stt.model, "transcribe") as mock_transcribe:
+        mock_seg = MagicMock()
+        mock_seg.text = "Patient Rahul Sharma reports fever."
+        mock_seg.avg_logprob = -0.3
+        mock_transcribe.return_value = ([mock_seg], None)
+
+        audio = np.random.randn(16000).astype(np.float32) * 0.1
+        res = stt.transcribe_segment(audio, initial_prompt="Test Prompt")
+
+        assert "Rahul Sharma" in res
+        mock_transcribe.assert_called_once()
+        _, kwargs = mock_transcribe.call_args
+        assert kwargs.get("beam_size") == 2
+        assert kwargs.get("vad_filter") is False
+        assert kwargs.get("temperature") == 0.0
+        assert "hotwords" not in kwargs
+
+
+def test_build_clinical_prompt_preserves_active_patient_in_224_tokens():
+    """Verify active patient is placed at the end so it survives Whisper 224-token prompt truncation."""
+    prompt = build_clinical_prompt("Rahul Sharma", "fever three days")
+    stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
+    enc = stt.model.hf_tokenizer.encode(prompt)
+    retained_text = stt.model.hf_tokenizer.decode(enc.ids[-224:])
+    assert "Rahul Sharma" in retained_text
+
+
 
