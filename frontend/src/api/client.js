@@ -60,6 +60,14 @@ export const medSyncApi = {
     method: "POST",
     body: JSON.stringify({ text, language }),
   }),
+  createUnscheduledEncounter: (patientName, chiefComplaint = "Unscheduled walk-in consultation") =>
+    request("/encounter/unscheduled", {
+      method: "POST",
+      body: JSON.stringify({
+        patient_name: patientName,
+        chief_complaint: chiefComplaint,
+      }),
+    }),
   fetchRecord: (tokenNumber) => request(`/encounter/${tokenNumber}/record`),
 }
 

@@ -15,7 +15,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { medSyncApi } from '@/api/client'
 
-export function useAudioStreamer(token, onTranscript, onToggles) {
+export function useAudioStreamer(token, onTranscript, onToggles, onHotwordsActive, overrideName) {
   const wsRef             = useRef(null)
   const audioCtxRef       = useRef(null)
   const streamRef         = useRef(null)
@@ -27,12 +27,14 @@ export function useAudioStreamer(token, onTranscript, onToggles) {
   const rafRef            = useRef(null)
 
   // Keep latest callbacks in refs to avoid stale closures
-  const onTranscriptRef = useRef(onTranscript)
-  const onTogglesRef    = useRef(onToggles)
+  const onTranscriptRef     = useRef(onTranscript)
+  const onTogglesRef        = useRef(onToggles)
+  const onHotwordsActiveRef = useRef(onHotwordsActive)
   useEffect(() => {
-    onTranscriptRef.current = onTranscript
-    onTogglesRef.current    = onToggles
-  }, [onTranscript, onToggles])
+    onTranscriptRef.current     = onTranscript
+    onTogglesRef.current        = onToggles
+    onHotwordsActiveRef.current = onHotwordsActive
+  }, [onTranscript, onToggles, onHotwordsActive])
 
   const [audioLevel, setAudioLevel] = useState(0)
   const [error,      setError]      = useState(null)
@@ -127,9 +129,17 @@ export function useAudioStreamer(token, onTranscript, onToggles) {
     setAudioLevel(0)
   }, [])
 
+  // ── sendOverride ────────────────────────────────────────────────────────────
+  const sendOverride = useCallback((name) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && name && name.trim()) {
+      wsRef.current.send(JSON.stringify({ type: 'OVERRIDE_PATIENT', name: name.trim() }))
+    }
+  }, [])
+
   // ── startStreaming ───────────────────────────────────────────────────────────
-  const startStreaming = useCallback(async (explicitToken) => {
+  const startStreaming = useCallback(async (explicitToken, explicitOverride) => {
     const currentToken = explicitToken || token
+    const activeOverride = explicitOverride !== undefined ? explicitOverride : overrideName
     try {
       setError(null)
 
@@ -153,8 +163,11 @@ export function useAudioStreamer(token, onTranscript, onToggles) {
       }
 
       // 4. Open WebSocket for this specific patient encounter
-      const wsUrl = medSyncApi.baseURL.replace(/^http/, 'ws')
+      let wsUrl = medSyncApi.baseURL.replace(/^http/, 'ws')
         + `/encounter/${currentToken}/audio-stream?role=doctor`
+      if (activeOverride && activeOverride.trim()) {
+        wsUrl += `&override_name=${encodeURIComponent(activeOverride.trim())}`
+      }
       const ws = new WebSocket(wsUrl)
       ws.binaryType = 'arraybuffer'
       wsRef.current = ws
@@ -167,6 +180,8 @@ export function useAudioStreamer(token, onTranscript, onToggles) {
             if (data.ui_toggles && Object.keys(data.ui_toggles).length) {
               onTogglesRef.current?.(data.ui_toggles)
             }
+          } else if (data.type === 'HOTWORDS_ACTIVE') {
+            if (data.hotwords) onHotwordsActiveRef.current?.(data.hotwords)
           }
         } catch (e) {
           console.error('[STT] WS message parse error', e)
@@ -205,7 +220,7 @@ export function useAudioStreamer(token, onTranscript, onToggles) {
       setError(err.message || 'Microphone access denied')
       stopStreaming()
     }
-  }, [token, initAudio, stopStreaming])
+  }, [token, overrideName, initAudio, stopStreaming])
 
   // Full unmount cleanup (hardware release on page exit only)
   useEffect(() => {
@@ -228,6 +243,6 @@ export function useAudioStreamer(token, onTranscript, onToggles) {
     }
   }, [])
 
-  return { startStreaming, stopStreaming, audioLevel, error }
+  return { startStreaming, stopStreaming, audioLevel, error, sendOverride }
 }
 
