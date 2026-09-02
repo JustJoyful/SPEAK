@@ -1,4 +1,5 @@
 import pytest
+import json
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
 
@@ -173,4 +174,47 @@ def test_stream_audio_locks_and_unlocks_session():
 
             # After disconnect: session is unlocked
             assert get_queue_entry_by_token(token, db_path=TEST_DB)["is_locked"] == 0
+
+
+def test_create_unscheduled_encounter():
+    """Verify creating an unscheduled encounter creates token, care context, and locks active session."""
+    with patch("backend.db.local.SQLITE_DB_PATH", TEST_DB):
+        response = client.post(
+            "/encounter/unscheduled",
+            json={"patient_name": "Venkatraman", "chief_complaint": "Acute headache"},
+            headers={"X-Role": "Doctor"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+        token = data["token_number"]
+        assert token > 1
+        assert data["queue_entry"]["patient_display_name"] == "Venkatraman"
+        assert data["queue_entry"]["chief_complaint"] == "Acute headache"
+
+
+def test_stream_audio_accepts_override_control_message():
+    """Verify WebSocket audio-stream accepts initial override_name and subsequent OVERRIDE_PATIENT frames."""
+    token = get_token()
+    with patch("backend.db.local.SQLITE_DB_PATH", TEST_DB):
+        with patch("backend.pipeline.stt.get_stt_engine") as mock_get_stt:
+            mock_stt = MagicMock()
+            mock_session = MagicMock()
+            mock_session.add_chunk.return_value = []
+            mock_session.flush.return_value = ""
+            mock_stt.create_stream_session.return_value = mock_session
+            mock_get_stt.return_value = mock_stt
+
+            with client.websocket_connect(
+                f"/encounter/{token}/audio-stream?role=doctor&override_name=Venkatraman"
+            ) as ws:
+                mock_session.update_override.assert_called_with("Venkatraman")
+
+                # Send runtime control frame
+                ws.send_text(json.dumps({"type": "OVERRIDE_PATIENT", "name": "Dr. Venkat"}))
+                msg = ws.receive_json()
+                assert msg["type"] == "HOTWORDS_ACTIVE"
+                assert msg["hotwords"] == "Dr. Venkat"
+                mock_session.update_override.assert_called_with("Dr. Venkat")
+
 
