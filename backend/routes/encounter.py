@@ -81,6 +81,9 @@ async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
         return
     await websocket.accept()
 
+    # Enforce active encounter locking during real-time streaming to prevent race conditions
+    active_session.set_locked(token_number, locked=True)
+
     from backend.pipeline.stt import get_stt_engine, build_clinical_prompt
 
     stt = get_stt_engine()  # lazy singleton — model loads on first WS connection
@@ -122,6 +125,7 @@ async def stream_audio(websocket: WebSocket, token_number: int, role: str = ""):
         except Exception:  # noqa: BLE001
             pass  # Best-effort flush — don't crash on disconnect
     finally:
+        active_session.set_locked(token_number, locked=False)
         del session
 
 

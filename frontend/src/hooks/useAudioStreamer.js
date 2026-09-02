@@ -55,9 +55,14 @@ export function useAudioStreamer(token, onTranscript, onToggles) {
       })
       streamRef.current = stream
 
-      // 2. AudioContext locked to 16 kHz
+      // 2. AudioContext locked to 16 kHz (with fallback if host refuses sampleRate parameter)
       const AudioContext = window.AudioContext || window.webkitAudioContext
-      const audioCtx = new AudioContext({ sampleRate: 16000 })
+      let audioCtx
+      try {
+        audioCtx = new AudioContext({ sampleRate: 16000 })
+      } catch {
+        audioCtx = new AudioContext()
+      }
       audioCtxRef.current = audioCtx
 
       const source = audioCtx.createMediaStreamSource(stream)

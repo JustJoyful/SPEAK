@@ -292,3 +292,17 @@ def test_low_confidence_segment_dropped():
         assert "Thanks for watching" not in result
         assert "Paracetamol" in result
 
+
+def test_add_chunk_odd_bytes_no_crash():
+    """Verify that odd-length byte buffers are truncated safely without raising ValueError."""
+    stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
+    session = AudioStreamSession(stt)
+    # Send 1 byte
+    res1 = session.add_chunk(b"\x00")
+    assert res1 == []
+    # Send odd number of bytes (e.g. 5 bytes)
+    res2 = session.add_chunk(b"\x00\x01\x00\x02\x03")
+    assert res2 == []
+    # Send empty bytes
+    assert session.add_chunk(b"") == []
+

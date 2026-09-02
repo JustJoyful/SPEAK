@@ -149,3 +149,28 @@ def test_append_transcript_rejects_after_finalization():
         )
         assert response.status_code == 409
 
+
+def test_stream_audio_locks_and_unlocks_session():
+    """Verify that stream_audio WebSocket acquires session lock and releases upon disconnect."""
+    token = get_token()
+    with patch("backend.db.local.SQLITE_DB_PATH", TEST_DB):
+        with patch("backend.pipeline.stt.get_stt_engine") as mock_get_stt:
+            mock_stt = MagicMock()
+            mock_session = MagicMock()
+            mock_session.add_chunk.return_value = []
+            mock_session.flush.return_value = ""
+            mock_stt.create_stream_session.return_value = mock_session
+            mock_get_stt.return_value = mock_stt
+
+            from backend.db.local import get_queue_entry_by_token
+            # Before connection: not locked
+            assert get_queue_entry_by_token(token, db_path=TEST_DB)["is_locked"] == 0
+
+            with client.websocket_connect(f"/encounter/{token}/audio-stream?role=doctor") as ws:
+                # During active WebSocket: session is locked
+                assert get_queue_entry_by_token(token, db_path=TEST_DB)["is_locked"] == 1
+                ws.send_bytes(b"\x00\x00" * 100)
+
+            # After disconnect: session is unlocked
+            assert get_queue_entry_by_token(token, db_path=TEST_DB)["is_locked"] == 0
+

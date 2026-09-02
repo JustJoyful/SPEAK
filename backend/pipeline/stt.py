@@ -164,6 +164,12 @@ class AudioStreamSession:
         if not pcm_bytes:
             return []
 
+        # Ensure byte length is 16-bit aligned (even number of bytes)
+        if len(pcm_bytes) % 2 != 0:
+            pcm_bytes = pcm_bytes[:len(pcm_bytes) - 1]
+        if not pcm_bytes:
+            return []
+
         # Step 0: Warm-up drop — discard hardware mic switch pops upon session start
         if self.warmup_samples_remaining > 0:
             samples_in_chunk = len(pcm_bytes) // 2
