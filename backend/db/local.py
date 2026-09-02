@@ -274,6 +274,59 @@ def update_sync_status(token_number: int, sync_status: str, db_path: Optional[st
     return rows_affected > 0
 
 
+def get_next_token_number(db_path: Optional[str] = None) -> int:
+    """Find the next available sequential token number."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT MAX(token_number) FROM queue")
+    row = cursor.fetchone()
+    conn.close()
+    max_token = row[0] if (row and row[0] is not None) else 0
+    return max_token + 1
+
+
+def create_unscheduled_patient(
+    patient_name: str,
+    chief_complaint: str = "Unscheduled walk-in consultation",
+    clinic_id: str = "CLINIC-LOCAL",
+    db_path: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Create an unscheduled walk-in patient encounter.
+    Generates local anonymous care context and allocates next sequential token.
+    """
+    import uuid
+    import hashlib
+    clean_name = patient_name.strip()
+    walkin_id = uuid.uuid4().hex[:8].upper()
+    care_context_id = f"CC-WALKIN-{walkin_id}"
+    abha_hash = hashlib.sha256(f"WALKIN-{care_context_id}".encode()).hexdigest()
+
+    # Local care context record
+    insert_care_context(
+        care_context_id=care_context_id,
+        raw_abha_id=f"WALKIN-{walkin_id}",
+        abha_hash=abha_hash,
+        clinic_id=clinic_id,
+        db_path=db_path
+    )
+
+    next_token = get_next_token_number(db_path=db_path)
+    return enqueue_patient(
+        token_number=next_token,
+        care_context_id=care_context_id,
+        patient_display_name=clean_name,
+        abha_hash=abha_hash,
+        status="in-progress",
+        chief_complaint=chief_complaint.strip() or "Unscheduled walk-in consultation",
+        script=f"Patient {clean_name} presents for consultation.",
+        marks_json=json.dumps({}),
+        pii_json=json.dumps([]),
+        fhir_preview_json=None,
+        db_path=db_path
+    )
+
+
 # ---------------------------------------------------------
 # Canonical Demo Seeding
 # ---------------------------------------------------------
