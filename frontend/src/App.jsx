@@ -56,6 +56,7 @@ export default function App() {
   const [selectionBusy, setSelectionBusy] = useState(null)
   const [statuses, setStatuses] = useState({})
   const [activeToken, setActiveToken] = useState(null)
+  const [activeOverrideName, setActiveOverrideName] = useState("")
   const [recording, setRecording] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [finished, setFinished] = useState(false)
@@ -73,6 +74,12 @@ export default function App() {
   const seq = useRef(0)
   const queueResizeStart = useRef({ x: 0, width: queueWidth })
   const mockWordIndexRef = useRef(0)
+  const lastMark = useRef({
+    symptoms: false,
+    diagnosis: false,
+    medication: false,
+    advice: false,
+  })
 
   const pushLog = useCallback((l) => {
     seq.current += 1
@@ -288,15 +295,33 @@ export default function App() {
     setChecks((current) => mergeChecklistState(current, toggles))
   }, [])
 
-  const { startStreaming, stopStreaming, audioLevel } = useAudioStreamer(
+  const handleHotwordsActive = useCallback((hotwords) => {
+    pushLog({
+      stage: "HOTWORDS",
+      level: "ok",
+      spans: [
+        { t: "text", v: "Attention head biased · " },
+        { t: "em", v: `hotwords: "${hotwords}"` },
+        { t: "arrow" },
+        { t: "text", v: "Whisper vocabulary conditioned" },
+      ],
+      metric: "0 ms",
+    })
+  }, [pushLog])
+
+  const { startStreaming, stopStreaming, audioLevel, sendOverride } = useAudioStreamer(
     activeToken,
     handleWSTranscript,
-    handleWSToggles
+    handleWSToggles,
+    handleHotwordsActive,
+    activeOverrideName
   )
 
   const resetCase = useCallback(
     (token) => {
       clearTimers()
+      // Reset lastMark so the filling→checked animation fires again for the new session
+      lastMark.current = { symptoms: false, diagnosis: false, medication: false, advice: false }
       cancelDebounce()
       resetDebounce()
       stopStreaming()
@@ -329,6 +354,8 @@ export default function App() {
 
   const handleDiscard = useCallback(() => {
     clearTimers()
+    // Reset lastMark so the filling→checked animation fires fresh on the next attempt
+    lastMark.current = { symptoms: false, diagnosis: false, medication: false, advice: false }
     cancelDebounce()
     resetDebounce()
     stopStreaming()
@@ -349,6 +376,73 @@ export default function App() {
     setLogs(idleLines())
   }, [clearTimers, cancelDebounce, resetDebounce, stopStreaming, activeToken, backendConfigured])
 
+  const handleStartUnscheduled = useCallback(
+    async (patientName) => {
+      const trimmed = patientName.trim()
+      if (!trimmed) return
+
+      setSelectionBusy("unscheduled")
+      try {
+        if (backendConfigured) {
+          const resp = await medSyncApi.createUnscheduledEncounter(trimmed)
+          const tokenNumber = resp.token_number
+          await loadQueue()
+          setActiveToken(tokenNumber)
+          setActiveOverrideName(trimmed)
+          resetCase(tokenNumber)
+          sendOverride(trimmed)
+          pushLog({
+            stage: "ATTENTION",
+            level: "ok",
+            spans: [
+              { t: "text", v: "Unscheduled encounter created · " },
+              { t: "em", v: trimmed },
+              { t: "arrow" },
+              { t: "text", v: `Token #${tokenNumber} · attention head biased` },
+            ],
+          })
+        } else {
+          const maxToken = cases.reduce((max, c) => Math.max(max, c.token || 0), 0)
+          const newToken = maxToken + 1
+          const newCase = {
+            token: newToken,
+            name: trimmed,
+            age: null,
+            sex: null,
+            complaint: "Unscheduled walk-in consultation",
+            status: "in-progress",
+            script: `Patient ${trimmed} presents for consultation.`,
+            pii: [],
+            marks: {},
+          }
+          setRemoteCases((prev) => [...(prev || []), newCase])
+          setActiveToken(newToken)
+          setActiveOverrideName(trimmed)
+          resetCase(newToken)
+          pushLog({
+            stage: "ATTENTION",
+            level: "ok",
+            spans: [
+              { t: "text", v: "Unscheduled encounter · " },
+              { t: "em", v: trimmed },
+              { t: "arrow" },
+              { t: "text", v: `Token #${newToken} · attention biased` },
+            ],
+          })
+        }
+      } catch (err) {
+        pushLog({
+          stage: "SESSION",
+          level: "warn",
+          spans: [{ t: "text", v: `Failed to create unscheduled encounter: ${readableError(err)}` }],
+        })
+      } finally {
+        setSelectionBusy(null)
+      }
+    },
+    [backendConfigured, loadQueue, resetCase, sendOverride, pushLog, cases],
+  )
+
   const handleSelect = useCallback(
     async (token) => {
       if (token === activeToken) return
@@ -362,6 +456,7 @@ export default function App() {
 
       // Always switch to the selected patient first
       setActiveToken(token)
+      setActiveOverrideName("")
       resetCase(token)
 
       if (!isDone) {
@@ -470,12 +565,10 @@ export default function App() {
     return () => window.clearInterval(id)
   }, [processing, recording, pushLog])
 
-  const lastMark = useRef({
-    symptoms: false,
-    diagnosis: false,
-    medication: false,
-    advice: false,
-  })
+  // Declarative reset: whenever active patient token changes, unlatch checklist animations
+  useEffect(() => {
+    lastMark.current = { symptoms: false, diagnosis: false, medication: false, advice: false }
+  }, [activeToken])
 
   useEffect(() => {
     if (!rawTranscript.trim()) {
@@ -726,6 +819,11 @@ export default function App() {
 
         <DictationPanel
           active={active}
+          cases={cases}
+          onSelectCase={handleSelect}
+          activeOverrideName={activeOverrideName}
+          onStartUnscheduled={handleStartUnscheduled}
+          onClearOverride={() => setActiveOverrideName("")}
           words={words}
           rawTranscript={rawTranscript}
           recording={recording}
@@ -772,7 +870,7 @@ export default function App() {
             redactCount={redactCount}
             egressClean={egressClean}
           />
-          <ChecklistPanel active={active} state={checks} />
+          <ChecklistPanel key={activeToken} active={active} state={checks} />
         </aside>
       </main>
       {record && <RecordViewer record={record} isBackend={backendConfigured} onClose={() => setRecord(null)} />}
