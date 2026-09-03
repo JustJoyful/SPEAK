@@ -142,10 +142,4 @@ npm --prefix frontend run build
 | _Add name_ | _Add role_ |
 | _Add name_ | _Add role_ |
 
-## Roadmap
 
-- Wire the existing CentralIndexClient.push_pointer operation into the active sync worker so a SyncPointer can be sent to the configured central index (backend/db/central.py, backend/pipeline/sync_poller.py).
-- Replace the mock X-Role header checks with authenticated identity and authorization (backend/routes/auth_deps.py).
-- Align .env.example with runtime configuration names: the template documents AES_MASTER_KEY and provider-specific LLM keys, while the code reads AES_ENCRYPTION_KEY, LLM_API_KEY, and DEEPSEEK_API_KEY.
-- Align run_demo.sh status text with frontend/vite.config.js; some launcher messages advertise port 5173 while Vite is configured for port 3000.
-- Add CI configuration that runs the existing backend tests and frontend build.
