@@ -28,6 +28,8 @@ S.P.E.A.K. combines a React/Vite doctor workspace with a FastAPI edge service. A
 
 ## Architecture
 
+![S.P.E.A.K. architecture overview](docs/architecture.svg)
+
 ```mermaid
 flowchart LR
   subgraph Browser["Browser · frontend/"]
