@@ -30,58 +30,6 @@ S.P.E.A.K. combines a React/Vite doctor workspace with a FastAPI edge service. A
 
 ![S.P.E.A.K. architecture overview](docs/architecture.svg)
 
-```mermaid
-flowchart LR
-  subgraph Browser["Browser · frontend/"]
-    UI["src/App.jsx<br/>queue · dictation · record UI"]
-    AUDIO["useAudioStreamer.js<br/>Web Audio + WebSocket"]
-    WORKLET["public/audio-processor.js<br/>16 kHz Int16 PCM"]
-    EVENTS["usePipelineStream.js<br/>EventSource"]
-    UI --> AUDIO --> WORKLET
-    UI --> EVENTS
-  end
-
-  subgraph Edge["FastAPI edge service · backend/"]
-    APP["main.py<br/>FastAPI · CORS · lifespan"]
-    RECEPTION["routes/reception.py<br/>queue endpoints"]
-    ENCOUNTER["routes/encounter.py<br/>HTTP + audio WebSocket"]
-    SSE["routes/events.py<br/>/events/stream"]
-    SESSION["session/active_encounter.py<br/>selection · lock · transcript"]
-    STT["pipeline/stt.py<br/>faster-whisper + VAD"]
-    CHECK["pipeline/checklist.py<br/>clinical pattern checks"]
-    MASK["pipeline/pii_mask.py<br/>regex + GLiNER"]
-    POLLER["pipeline/sync_poller.py<br/>queued record worker"]
-    STRUCT["pipeline/llm_structurer.py<br/>local rules or HTTP LLM"]
-    SCHEMA["pipeline/fhir_schema.py<br/>Pydantic record models"]
-    CRYPTO["pipeline/crypto.py + hash_chain.py<br/>AES-GCM + SHA-256"]
-    APP --> RECEPTION
-    APP --> ENCOUNTER
-    APP --> SSE
-    ENCOUNTER --> SESSION
-    ENCOUNTER --> STT
-    ENCOUNTER --> CHECK
-    ENCOUNTER --> MASK
-    SSE --> EVENTS
-    MASK --> POLLER --> STRUCT --> SCHEMA --> CRYPTO
-  end
-
-  subgraph Store["Local persistence · backend/db/local.py"]
-    DB[("SQLite<br/>queue · care contexts · encounters · hash_chain<br/>WAL mode")]
-  end
-
-  LLM["Optional OpenAI-compatible / DeepSeek endpoint"]
-
-  UI -->|HTTP via api/client.js| APP
-  AUDIO -->|audio WebSocket| ENCOUNTER
-  WORKLET --> AUDIO
-  RECEPTION --> DB
-  SESSION --> DB
-  MASK --> DB
-  POLLER --> DB
-  CRYPTO --> DB
-  STRUCT -. sanitized clinical text .-> LLM
-
-```
 
 The browser talks to the local FastAPI service through HTTP, WebSocket, and SSE routes. Finalization calls the masking pipeline before the pending transcript is processed; only the sanitized clinical text is eligible for the optional external structuring request. The resulting validated record is encrypted and written to the local SQLite encounter store.
 
