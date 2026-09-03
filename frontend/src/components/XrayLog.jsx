@@ -52,9 +52,14 @@ export function XrayLog({ lines, phase, busy, redactCount, egressClean }) {
             />
             {busy && <span className="absolute inset-0 animate-ping rounded-full bg-running/60" />}
           </span>
-          <h2 className="font-mono text-[0.72rem] font-medium uppercase tracking-[0.13em] text-vault-ink">
-            Privacy X-Ray
-          </h2>
+          <div>
+            <h2 className="font-mono text-[0.72rem] font-medium uppercase tracking-[0.13em] text-vault-ink">
+              Privacy X-Ray
+            </h2>
+            <p className="mt-1 font-sans text-[0.66rem] leading-relaxed text-vault-dim">
+              Observe every protection step before data leaves the device.
+            </p>
+          </div>
         </div>
         <span
           className={cn(

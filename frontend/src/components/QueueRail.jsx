@@ -29,6 +29,9 @@ export function QueueRail({ cases, activeToken, onSelect, doneCount, selectionBu
           <p className="tnum mt-1.5 text-[0.7rem] font-normal text-clinical-muted">
             Wed 12 Aug · PHC Kolar · Dr. A. Menon
           </p>
+          <p className="mt-3 max-w-[22ch] text-[0.68rem] leading-relaxed text-clinical-muted">
+            Select a token to open a protected dictation workspace.
+          </p>
         </div>
         <span className="tnum shrink-0 rounded-full border border-clinical-line bg-clinical-surface px-2 py-[3px] text-[0.66rem] font-medium text-clinical-muted">
           {doneCount}/{cases.length}

@@ -254,7 +254,11 @@ export function DictationPanel({
       </header>
 
       {/* mic focal point */}
-      <div className="relative flex flex-col items-center gap-4 border-b border-clinical-line px-6 py-7">
+      <div className="relative flex shrink-0 flex-col items-center gap-3 border-b border-clinical-line bg-clinical-surface px-6 py-5 lg:gap-3 lg:py-6">
+        <div className="flex items-center gap-2 rounded-full border border-teal/20 bg-teal-soft/60 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.1em] text-teal">
+          <span className="h-1.5 w-1.5 rounded-full bg-teal" aria-hidden="true" />
+          {active ? "Ready for clinical dictation" : "Select a patient to begin"}
+        </div>
         {recording && !useMockData && (
           <div className="absolute top-4 right-4 flex items-center gap-1.5 rounded-full bg-coral/10 px-2.5 py-1" aria-hidden="true">
             <span className="relative flex h-2 w-2">
@@ -340,11 +344,16 @@ export function DictationPanel({
 
       {/* transcript & typing box */}
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex items-center justify-between gap-3 border-t border-clinical-line/70 bg-clinical-surface/60 px-6 pb-2 pt-4 lg:px-8">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-t border-clinical-line/70 bg-clinical-surface/60 px-6 pb-2 pt-3 lg:px-8">
           <div className="flex items-center gap-2">
-            <h3 className="text-[0.66rem] font-semibold uppercase tracking-[0.1em] text-clinical-muted">
-              Clinical Notes & Transcript
-            </h3>
+            <div>
+              <h3 className="text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-clinical-ink">
+                Clinical Notes & Transcript
+              </h3>
+              <p className="mt-1 text-[0.68rem] leading-relaxed text-clinical-muted">
+                Your live dictation becomes the editable note and clinical chat context.
+              </p>
+            </div>
             {!recording && !finished && !processing && (
               <span className="flex items-center gap-1 rounded-full border border-teal/25 bg-teal-soft px-2 py-[2px] text-[0.58rem] font-medium text-teal">
                 <Pencil className="h-2.5 w-2.5" aria-hidden="true" />

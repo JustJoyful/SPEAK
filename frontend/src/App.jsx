@@ -785,8 +785,9 @@ export default function App() {
       </header>
 
       {backendConfigured && (queueLoading || queueError || finishError) && (
-        <div className="flex items-center justify-between gap-3 border-b border-clinical-line bg-clinical-surface px-5 py-2 text-xs lg:px-6">
-          <span className={queueError || finishError ? "text-rejected" : "text-clinical-muted"}>
+        <div className="flex items-center justify-between gap-3 border-b border-clinical-line bg-clinical-surface/70 px-5 py-1.5 text-[0.7rem] lg:px-6">
+          <span className={cn("flex min-w-0 items-center gap-2", queueError || finishError ? "text-clinical-muted" : "text-clinical-muted")}>
+            <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", queueError || finishError ? "bg-running" : "animate-breath bg-running")} aria-hidden="true" />
             {queueLoading && "Loading live queue…"}
             {!queueLoading && queueError && `Live queue unavailable · ${queueError}`}
             {!queueLoading && !queueError && finishError && `Consultation failed · ${finishError}`}
