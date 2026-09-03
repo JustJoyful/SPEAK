@@ -21,7 +21,7 @@ const STATUS_STYLE = {
 export function QueueRail({ cases, activeToken, onSelect, doneCount, selectionBusy }) {
   return (
     <aside className="flex min-h-0 flex-col border-clinical-line bg-clinical lg:border-r">
-      <header className="flex items-baseline justify-between gap-3 border-b border-clinical-line bg-clinical-surface/50 px-5 pb-4 pt-5">
+      <header className="border-b border-clinical-line bg-clinical-surface/70 px-5 pb-4 pt-5">
         <div>
           <h2 className="text-[0.95rem] font-semibold leading-none tracking-[-0.01em] text-clinical-ink">
             Today&apos;s queue
