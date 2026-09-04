@@ -32,10 +32,16 @@ const PHASE_LABEL = {
 
 export function XrayLog({ lines, phase, busy, redactCount, egressClean }) {
   const ref = useRef(null)
+  const isInitial = useRef(true)
 
   useEffect(() => {
     const el = ref.current
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
+    if (!el) return
+    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    if (isInitial.current || isAtBottom) {
+      el.scrollTop = el.scrollHeight
+      isInitial.current = false
+    }
   }, [lines.length])
 
   return (
