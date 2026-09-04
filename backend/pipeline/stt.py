@@ -79,8 +79,8 @@ _TRANSIENT_FILLER_WORDS: set[str] = {
 # Minimum avg log-probability per token for a segment to be considered real speech.
 # Whisper returns ~log(1/vocab_size) ≈ -4.6 for random tokens — genuine speech
 # sits around -0.2 to -0.8. int8 quantization lowers internal log-probabilities;
-# gating at -1.6 ensures accented and fast Indian clinical speech is preserved.
-_MIN_AVG_LOG_PROB: float = float(os.getenv("WHISPER_MIN_LOG_PROB", "-1.6"))
+# gating at -2.0 ensures accented and fast Indian clinical speech is preserved.
+_MIN_AVG_LOG_PROB: float = float(os.getenv("WHISPER_MIN_LOG_PROB", "-2.0"))
 
 # ---------------------------------------------------------------------------
 # Weaponized demo-seeded initial_prompt
@@ -99,16 +99,12 @@ _MIN_AVG_LOG_PROB: float = float(os.getenv("WHISPER_MIN_LOG_PROB", "-1.6"))
 #                ORS, Dolo 650, Augmentin, Azithromycin
 # ---------------------------------------------------------------------------
 DEMO_SEEDED_PROMPT = (
-    "Doctor dictation, Indian English, outpatient clinic. "
-    "Patient Rahul Sharma, thirty four year old male, fever three days, paracetamol six fifty, ORS, dengue NS1. "
-    "Patient Meena Devi, fifty two year old female, type two diabetes, metformin one thousand, pregabalin seventy five, HbA1c. "
-    "Patient Arjun Kumar, seven year old male, wheeze, salbutamol inhaler, budesonide hundred micrograms. "
-    "Patient Lakshmi Bai, twenty eight year old female, antenatal twenty four weeks, iron folic acid, calcium five hundred. "
-    "Patient Ibrahim Sheikh, sixty one year old male, chest tightness, aspirin seventy five, atorvastatin twenty, sorbitrate sublingual, amlodipine. "
-    "Patient Sunita Rani, forty five year old female, joint pain, naproxen two fifty, rheumatoid factor, anti CCP. "
-    "Vitals: BP 120 over 80, pulse 72, SpO2 98, temperature 101.4 Fahrenheit, respiratory rate 26. "
-    "Impression: acute viral febrile illness, type two diabetes mellitus, peripheral neuropathy, "
-    "episodic asthma, stable angina, inflammatory polyarthritis."
+    "Rahul Sharma, Meena Devi, Arjun Kumar, Lakshmi Bai, Ibrahim Sheikh, Sunita Rani, "
+    "paracetamol, Dolo 650, metformin, pregabalin, salbutamol, budesonide, iron folic acid, "
+    "calcium, aspirin, atorvastatin, sorbitrate, naproxen, amlodipine, ORS, augmentin, "
+    "azithromycin, cetirizine, pantocid, vitamin C, BP, pulse, SpO2, HbA1c, dengue NS1, "
+    "fever, cold, body ache, chills, cough, wheeze, chest tightness, joint pain, diabetes, "
+    "neuropathy, asthma, angina, arthritis."
 )
 
 
@@ -133,6 +129,8 @@ class AudioStreamSession:
     Stateful streaming audio session for WebSocket ingestion.
 
     Maintains a rolling float32 PCM buffer (16 kHz mono).
+    Absorbs the first 400ms (6,400 samples) of audio as a warm-up drop to eliminate
+    hardware mic switch pops and electrical DC offsets.
     Throttles Silero neural VAD evaluation to >= 512ms chunks to eliminate CPU death-loops.
     Slices and transcribes only upon confirmed phrase boundaries (speech followed by >= 500ms
     of trailing silence). Safely shifts the buffer to preserve natural leading context.
@@ -145,6 +143,8 @@ class AudioStreamSession:
         self.override_name: str = ""
         self.buffer: np.ndarray = np.array([], dtype=np.float32)
         self.last_eval_length: int = 0
+        # Warm-up drop: 400ms (6,400 samples at 16 kHz) discarded to eliminate initialization pops
+        self.warmup_samples_remaining: int = 6400
         self.vad_options = VadOptions(
             threshold=0.40,
             min_speech_duration_ms=100,
@@ -179,6 +179,16 @@ class AudioStreamSession:
             pcm_bytes = pcm_bytes[:len(pcm_bytes) - 1]
         if not pcm_bytes:
             return []
+
+        # Step 0: Warm-up drop — discard hardware mic switch pops upon session start
+        if self.warmup_samples_remaining > 0:
+            samples_in_chunk = len(pcm_bytes) // 2
+            if samples_in_chunk <= self.warmup_samples_remaining:
+                self.warmup_samples_remaining -= samples_in_chunk
+                return []
+            drop_bytes = self.warmup_samples_remaining * 2
+            pcm_bytes = pcm_bytes[drop_bytes:]
+            self.warmup_samples_remaining = 0
 
         # Convert int16 bytes to normalized float32
         chunk_np = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
@@ -278,6 +288,7 @@ class RealtimeSTT:
             min_silence_duration_ms=500,
             speech_pad_ms=150,
         )
+        self.current_prompt: str = DEMO_SEEDED_PROMPT
         logger.info("STT pipeline ready — demo-seeded prompt + stateful neural VAD loaded.")
 
     def create_stream_session(self, initial_prompt: str = "") -> AudioStreamSession:
@@ -296,27 +307,28 @@ class RealtimeSTT:
         if audio_np.size < 1600:  # Ignore sub-100ms blips
             return ""
 
-        prompt = initial_prompt or DEMO_SEEDED_PROMPT
+        self.current_prompt = initial_prompt or DEMO_SEEDED_PROMPT
 
         # Decoder configuration:
-        # beam_size=2: evaluates candidate paths for proper nouns and accented speech.
+        # beam_size=2: YES. Keep the backup phonetic path open.
         # temperature=0.0: greedy decoding across the beam.
-        # condition_on_previous_text=False: resets context between phrases to prevent loops.
-        # vad_filter=False: audio is already segmented by Silero VAD in AudioStreamSession.
+        # condition_on_previous_text=True: Context awareness on.
+        # vad_filter=True: faster-whisper internal Silero VAD strips silence/noise before decoding.
         # compression_ratio_threshold=1.8: drops repetitive character/word loops.
-        # no_speech_threshold=0.60: reliable speech confidence gate.
-        # log_prob_threshold=-1.6: relaxed for int8 quantization and fast Indian English cadence.
+        # no_speech_threshold=0.6: reliable speech confidence gate.
+        # log_prob_threshold=-2.0: Accent tolerance on.
         segments, _info = self.model.transcribe(
             audio_np,
             language="en",
-            vad_filter=False,
-            beam_size=2,
+            vad_filter=True,
+            vad_parameters=self.vad_parameters,
+            beam_size=2,                      # YES. Keep the backup phonetic path open.
             temperature=0.0,
-            initial_prompt=prompt,
-            condition_on_previous_text=False,
+            condition_on_previous_text=True,  # Context awareness on.
+            log_prob_threshold=-2.0,          # Accent tolerance on.
+            initial_prompt=self.current_prompt,
             compression_ratio_threshold=1.8,
-            no_speech_threshold=0.60,
-            log_prob_threshold=-1.6,
+            no_speech_threshold=0.6,
         )
 
         # Per-segment confidence gate, transient filler gate, and phrase blocklist

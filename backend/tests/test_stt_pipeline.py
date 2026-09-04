@@ -53,7 +53,7 @@ def test_transcribe_empty_segment():
 
 @pytest.mark.asyncio
 async def test_async_worker_offload():
-    """Verify that transcription executes with beam_size=2 and compression_ratio_threshold=1.8."""
+    """Verify that transcription executes with beam_size=1 and compression_ratio_threshold=1.8."""
     stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
 
     custom_prompt = build_clinical_prompt("Rahul Sharma", "Fever, 3 days")
@@ -70,23 +70,34 @@ async def test_async_worker_offload():
         mock_transcribe.assert_called_once()
         _, kwargs = mock_transcribe.call_args
         assert kwargs["initial_prompt"] == custom_prompt
-        assert kwargs["condition_on_previous_text"] is False
+        assert kwargs["condition_on_previous_text"] is True
         assert kwargs["beam_size"] == 2
-        assert kwargs["vad_filter"] is False
-        assert kwargs["no_speech_threshold"] == 0.60
-        assert kwargs["log_prob_threshold"] == -1.6
+        assert kwargs["vad_filter"] is True
+        assert kwargs["vad_parameters"] == stt.vad_parameters
+        assert kwargs["no_speech_threshold"] == 0.6
+        assert kwargs["log_prob_threshold"] == -2.0
         assert kwargs["compression_ratio_threshold"] == 1.8
         assert kwargs["temperature"] == 0.0   # scalar, not a list
 
 
-def test_immediate_audio_ingestion_no_warmup_drop():
-    """Verify that AudioStreamSession ingests audio immediately from sample 0 without dropping onset speech."""
+def test_warmup_drop_hardware_mic_pops():
+    """Verify that AudioStreamSession drops the first 400ms (6400 samples) to absorb hardware mic switch clicks/pops."""
     stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
     session = stt.create_stream_session()
 
+    # 200ms chunk (3200 samples) -> absorbed by warmup
     audio_200ms = (np.random.randn(3200).astype(np.float32) * 0.1 * 32768).astype(np.int16).tobytes()
-    session.add_chunk(audio_200ms)
-    assert len(session.buffer) == 3200
+    res1 = session.add_chunk(audio_200ms)
+    assert res1 == []
+    assert len(session.buffer) == 0
+    assert session.warmup_samples_remaining == 3200
+
+    # Another 300ms chunk (4800 samples) -> 3200 samples complete the warmup drop, 1600 samples enter buffer
+    audio_300ms = (np.random.randn(4800).astype(np.float32) * 0.1 * 32768).astype(np.int16).tobytes()
+    res2 = session.add_chunk(audio_300ms)
+    assert res2 == []
+    assert session.warmup_samples_remaining == 0
+    assert len(session.buffer) == 1600
 
 
 def test_transient_filler_words_dropped_on_short_burst():
@@ -308,8 +319,8 @@ def test_audio_stream_session_update_override():
     assert session.prompt.endswith("Patient: Venkatraman. Consultation for Venkatraman.")
 
 
-def test_transcribe_segment_uses_beam_and_no_redundant_vad():
-    """Verify that transcribe_segment uses beam_size=2 and vad_filter=False."""
+def test_transcribe_segment_uses_beam2_and_context():
+    """Verify that transcribe_segment uses beam_size=2, condition_on_previous_text=True, and vad_filter=True."""
     stt = RealtimeSTT(model_size="tiny.en", compute_type="int8")
     with patch.object(stt.model, "transcribe") as mock_transcribe:
         mock_seg = MagicMock()
@@ -324,7 +335,10 @@ def test_transcribe_segment_uses_beam_and_no_redundant_vad():
         mock_transcribe.assert_called_once()
         _, kwargs = mock_transcribe.call_args
         assert kwargs.get("beam_size") == 2
-        assert kwargs.get("vad_filter") is False
+        assert kwargs.get("condition_on_previous_text") is True
+        assert kwargs.get("log_prob_threshold") == -2.0
+        assert kwargs.get("vad_filter") is True
+        assert kwargs.get("vad_parameters") == stt.vad_parameters
         assert kwargs.get("temperature") == 0.0
         assert "hotwords" not in kwargs
 
