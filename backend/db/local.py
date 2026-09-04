@@ -341,18 +341,17 @@ DEMO_PATIENTS = [
         "status": "in-progress",
         "abha": "91-4820-9182-4412",
         "context": "CC-90142",
-        "script": "Patient Rahul Sharma, thirty four year old male, presents with high grade fever for three days, associated chills and body ache. No cough, no breathlessness. Temperature one hundred and one point four Fahrenheit, pulse ninety two, blood pressure one eighteen over seventy six. Throat mildly congested, chest clear on auscultation. Impression: acute viral febrile illness, dengue not ruled out. Advise paracetamol six fifty milligrams three times a day after food for three days, oral rehydration, and complete blood count with dengue NS1 today. Callback number nine eight seven six five four three two one zero. Review after forty eight hours or earlier if bleeding or persistent vomiting.",
+        "script": "Patient Rahul Sharma, thirty-four years old. Presents with a severe cold, body ache, and high fever for three days. Temperature is 102. Diagnosis is a severe viral infection. Prescribed Dolo 650 three times a day, and Vitamin C. Advised complete bed rest.",
         "pii": [
-            { "raw": "Rahul Sharma", "hash": "HASH_7A9B", "kind": "NAME" },
-            { "raw": "nine eight seven six five four three two one zero", "hash": "HASH_C4E1", "kind": "PHONE" }
+            { "raw": "Rahul Sharma", "hash": "HASH_7A9B", "kind": "NAME" }
         ],
-        "marks": { "symptoms": 22, "diagnosis": 62, "medication": 84, "advice": 118 },
+        "marks": { "symptoms": 12, "diagnosis": 24, "medication": 32, "advice": 40 },
         "fhir": {
-            "symptoms": ["High grade fever ×3 days", "Chills, myalgia", "No cough / no dyspnoea"],
-            "diagnosis": "Acute viral febrile illness — r/o dengue",
-            "code": "ICD-10 · A97.0",
-            "medication": ["Paracetamol 650 mg · TDS · PC · 3 days", "ORS sachets · ad lib"],
-            "advice": ["CBC + Dengue NS1 today", "Review in 48 h", "Red flags: bleeding, vomiting"]
+            "symptoms": ["Severe cold", "Body ache", "High fever for three days (102°F)"],
+            "diagnosis": "Severe viral infection",
+            "code": "ICD-10 · B34.9",
+            "medication": ["Dolo 650 · TDS", "Vitamin C"],
+            "advice": ["Complete bed rest"]
         }
     },
     {

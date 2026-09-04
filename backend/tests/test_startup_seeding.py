@@ -61,9 +61,9 @@ def test_json_deserialization_no_double_escaping():
     entry = get_queue_entry_by_token(12, TEST_DB)
     assert entry is not None
     assert isinstance(entry["marks"], dict)
-    assert entry["marks"]["symptoms"] == 22
+    assert entry["marks"]["symptoms"] == 12
     assert isinstance(entry["pii"], list)
-    assert len(entry["pii"]) == 2
+    assert len(entry["pii"]) == 1
     assert isinstance(entry["fhir"], dict)
     assert "symptoms" in entry["fhir"]
     assert "ICD-10" in entry["fhir"]["code"]
