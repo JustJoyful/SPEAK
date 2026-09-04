@@ -870,7 +870,13 @@ export default function App() {
             redactCount={redactCount}
             egressClean={egressClean}
           />
-          <ChecklistPanel key={activeToken} active={active} state={checks} />
+          <ChecklistPanel
+            key={activeToken}
+            active={active}
+            state={checks}
+            transcript={rawTranscript}
+            useMockData={useMockData}
+          />
         </aside>
       </main>
       {record && <RecordViewer record={record} isBackend={backendConfigured} onClose={() => setRecord(null)} />}

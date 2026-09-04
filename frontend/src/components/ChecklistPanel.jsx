@@ -1,8 +1,8 @@
 import { Check } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { CHECKLIST_LABELS, CHECKLIST_ORDER } from "@/lib/cases"
+import { CHECKLIST_LABELS, CHECKLIST_ORDER, extractMatchedTerms } from "@/lib/cases"
 
-export function ChecklistPanel({ active, state }) {
+export function ChecklistPanel({ active, state, transcript = "", useMockData = false }) {
   const done = CHECKLIST_ORDER.filter((k) => state[k] === "checked").length
 
   return (
@@ -32,7 +32,7 @@ export function ChecklistPanel({ active, state }) {
       <ul className="flex flex-col gap-px px-2 pb-3">
         {CHECKLIST_ORDER.map((k) => {
           const st = state[k]
-          const content = fieldPreview(active, k)
+          const content = fieldPreview(active, k, transcript, useMockData)
           return (
             <li
               key={k}
@@ -105,23 +105,35 @@ export function ChecklistPanel({ active, state }) {
   )
 }
 
-function fieldPreview(c, k) {
-  if (!c || !c.fhir) return []
-  if (k === "symptoms") {
-    const sym = c.fhir.symptoms || c.fhir.chief_complaints || []
-    return Array.isArray(sym) ? sym : [String(sym)]
+function fieldPreview(c, k, transcript, useMockData) {
+  // 1. In real live dictation, show genuine matched clinical terms from the transcript
+  if (transcript && transcript.trim()) {
+    const matched = extractMatchedTerms(transcript)[k]
+    if (matched && matched.length > 0) {
+      return matched
+    }
   }
-  if (k === "diagnosis") {
-    const diag = c.fhir.diagnosis || c.fhir.diagnoses || []
-    const code = c.fhir.code
-    const list = Array.isArray(diag) ? diag : [diag]
-    if (code && !list.includes(code)) list.push(code)
-    return list.filter(Boolean).map((d) => typeof d === "object" ? d.text || d.code?.text || JSON.stringify(d) : String(d))
+
+  // 2. Only fall back to pre-seeded demo FHIR if explicitly in mock simulation mode
+  if (useMockData && c && c.fhir) {
+    if (k === "symptoms") {
+      const sym = c.fhir.symptoms || c.fhir.chief_complaints || []
+      return Array.isArray(sym) ? sym : [String(sym)]
+    }
+    if (k === "diagnosis") {
+      const diag = c.fhir.diagnosis || c.fhir.diagnoses || []
+      const code = c.fhir.code
+      const list = Array.isArray(diag) ? diag : [diag]
+      if (code && !list.includes(code)) list.push(code)
+      return list.filter(Boolean).map((d) => (typeof d === "object" ? d.text || d.code?.text || JSON.stringify(d) : String(d)))
+    }
+    if (k === "medication") {
+      const med = c.fhir.medication || c.fhir.medications || []
+      return (Array.isArray(med) ? med : [med]).filter(Boolean).map((m) => (typeof m === "object" ? m.text || m.medication?.text || JSON.stringify(m) : String(m)))
+    }
+    const adv = c.fhir.advice || c.fhir.plan || c.fhir.advice_and_followup || []
+    return (Array.isArray(adv) ? adv : [adv]).filter(Boolean).map((a) => (typeof a === "object" ? a.text || JSON.stringify(a) : String(a)))
   }
-  if (k === "medication") {
-    const med = c.fhir.medication || c.fhir.medications || []
-    return (Array.isArray(med) ? med : [med]).filter(Boolean).map((m) => typeof m === "object" ? m.text || m.medication?.text || JSON.stringify(m) : String(m))
-  }
-  const adv = c.fhir.advice || c.fhir.plan || c.fhir.advice_and_followup || []
-  return (Array.isArray(adv) ? adv : [adv]).filter(Boolean).map((a) => typeof a === "object" ? a.text || JSON.stringify(a) : String(a))
+
+  return []
 }

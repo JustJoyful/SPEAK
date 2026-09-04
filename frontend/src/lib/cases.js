@@ -10,7 +10,7 @@ export const CHECKLIST_ORDER = ["symptoms", "diagnosis", "medication", "advice"]
 export const SYMPTOM_PATTERN = /\b(fever|chills|cough|cold|headache|pain|chest\s+pain|body\s+ache|vomit|nausea|dizzy|dizziness|fatigue|weakness|breathless|shortness\s+of\s+breath|throat|sore\s+throat|rash|swelling|burning|itching|paraesthesia|polydipsia|thirst|ache|wheeze|lesion|wound)\b/i
 export const DIAGNOSIS_PATTERN = /\b(hypertension|diabetes|dengue|malaria|typhoid|asthma|bronchitis|pneumonia|infection|gastritis|gerd|copd|arthritis|migraine|anaemia|anemia|tuberculosis|tb|uti|illness|febrile|neuropathy|t2dm|t1dm)\b/i
 export const MEDICATION_PATTERN = /\b(dolo|paracetamol|pcm|metformin|amlodipine|pantocid|pantoprazole|augmentin|amoxicillin|azithromycin|cetirizine|salbutamol|budesonide|pregabalin|ors|tab|tablet|syrup|inhaler|capsule|mg|mcg|tds|bd|od|hs|prn|sos|dosage|dose|drops)\b/i
-export const ADVICE_PATTERN = /\b(rest|fluid|fluids|water|diet|exercise|avoid|salt|sugar|review|follow\s*up|consult|admitted|hospital|investigation|test|cbc|ecg|blood\s+test|warm\s+water|days|hours|weeks|month|inspection|hba1c|creatinine)\b/i
+export const ADVICE_PATTERN = /\b(rest|fluid|fluids|water|diet|exercise|avoid|salt|sugar|review|follow\s*up|consult|admitted|hospital|investigation|test|cbc|ecg|blood\s+test|warm\s+water)\b/i
 
 export function extractClinicalChecklist(text) {
   if (!text || typeof text !== "string" || !text.trim()) return {}
@@ -19,6 +19,31 @@ export function extractClinicalChecklist(text) {
     diagnosis: DIAGNOSIS_PATTERN.test(text) ? "checked" : "empty",
     medication: MEDICATION_PATTERN.test(text) ? "checked" : "empty",
     advice: ADVICE_PATTERN.test(text) ? "checked" : "empty",
+  }
+}
+
+export function extractMatchedTerms(text) {
+  if (!text || typeof text !== "string" || !text.trim()) {
+    return { symptoms: [], diagnosis: [], medication: [], advice: [] }
+  }
+  const getMatches = (regex) => {
+    const globalRegex = new RegExp(regex.source, "gi")
+    const matches = text.match(globalRegex) || []
+    const unique = []
+    for (const m of matches) {
+      const cleaned = m.trim().toLowerCase()
+      if (cleaned && !unique.includes(cleaned)) {
+        unique.push(cleaned.charAt(0).toUpperCase() + cleaned.slice(1))
+      }
+    }
+    return unique.slice(0, 4)
+  }
+
+  return {
+    symptoms: getMatches(SYMPTOM_PATTERN),
+    diagnosis: getMatches(DIAGNOSIS_PATTERN),
+    medication: getMatches(MEDICATION_PATTERN),
+    advice: getMatches(ADVICE_PATTERN),
   }
 }
 
