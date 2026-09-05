@@ -26,8 +26,12 @@ async def process_pending_record(record: dict) -> bool:
     """Process a single pending record: LLM structure -> Encrypt -> Sync."""
     token_number = record["token_number"]
     care_context_id = record["care_context_id"]
-    sanitized_text = record["cumulative_transcript"]
+    sanitized_text = record.get("cumulative_transcript", "").strip()
     abha_hash = record["abha_hash"]
+
+    if not sanitized_text:
+        logger.warning(f"Pending record for token {token_number} has an empty transcript. Skipping LLM structuring.")
+        return False
 
     try:
         # 1. Structure FHIR R4 Bundle using sanitized text
