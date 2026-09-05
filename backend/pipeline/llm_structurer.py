@@ -12,7 +12,7 @@ Ensure you map the extracted information to the following keys:
 - "chief_complaints": list of strings
 - "vitals": list of objects with "vital_name", "value", and optional "interpretation"
 - "diagnoses": list of objects with "clinical_status" (active/resolved/etc), "verification_status" (provisional/confirmed/etc), "code" (having "coding" list and "text" string), and optional "notes"
-- "medications": list of objects with "medication" (having "coding" list and "text" string), "dosage" (having "timing", "duration", "route", "instructions"), and optional "reason"
+- "medications": list of objects with "medication" (having "coding" list and "text" string), "dosage" (having "timing", "duration", "route", "instructions" - provide clinical defaults like "As directed", "oral", "As prescribed" if not explicitly stated), and optional "reason"
 - "advice_and_followup": string or null
 
 Do NOT include any patient identifiable information like names, phone numbers, or ABHA IDs. Only include clinical data.
@@ -131,6 +131,22 @@ async def sadiesink(clinical_text: str, care_context_id: str, api_key: "Optional
 
             parsed_json = json.loads(llm_output)
             parsed_json = inject_care_context(parsed_json, care_context_id)
+
+            # Defensive normalization: coerce None or missing dosage fields to standard clinical defaults
+            if isinstance(parsed_json.get("medications"), list):
+                for m in parsed_json["medications"]:
+                    if isinstance(m, dict):
+                        d = m.get("dosage")
+                        if not isinstance(d, dict):
+                            d = {}
+                        if not d.get("timing"):
+                            d["timing"] = "As directed"
+                        if not d.get("duration"):
+                            d["duration"] = "As prescribed"
+                        if not d.get("route"):
+                            d["route"] = "oral"
+                        m["dosage"] = d
+
             record = FHIROPConsultRecord.model_validate(parsed_json)
             return record, ""
 
