@@ -62,6 +62,10 @@ async def select_patient(token_number: int):
 async def reset_encounter(token_number: int):
     """Resets the encounter session and clears cumulative transcript."""
     active_session.clear_session(token_number)
+    from backend.db.local import update_token_status, update_sync_status, update_session_transcript
+    update_session_transcript(token_number, "", is_locked=False)
+    update_token_status(token_number, "in-progress")
+    update_sync_status(token_number, "none")
     event_bus.log_audit_event("RESET_ENCOUNTER", f"Token {token_number} session reset.", "Doctor")
     return {"status": "success", "token_number": token_number, "message": "Encounter reset"}
 
@@ -126,6 +130,13 @@ async def stream_audio(
 
     # Look up patient context to condition Whisper decoder for high phonetic accuracy
     entry = get_queue_entry_by_token(token_number)
+    if entry and (entry.get("status") == "done" or entry.get("sync_status") in ["pending_structuring", "structured", "synced"]):
+        # The doctor opened the audio stream to record for this token.
+        # Transition out of finalized state so new speech can be recorded.
+        from backend.db.local import update_token_status, update_sync_status
+        update_token_status(token_number, "in-progress")
+        update_sync_status(token_number, "none")
+
     patient_name = override_name or (entry.get("patient_display_name", "") if entry else "")
     complaint = entry.get("chief_complaint", "") if entry else ""
     clinical_prompt = build_clinical_prompt(patient_name, complaint)
@@ -148,16 +159,25 @@ async def stream_audio(
                     if not text:
                         continue
 
-                    active_session.append_transcript(token_number, text)
-                    state = active_session.get_current_state(token_number)
-                    cumulative = state.get("transcript", "")
-                    checklist, _ = await extract_checklist(cumulative)
+                    try:
+                        active_session.append_transcript(token_number, text)
+                        state = active_session.get_current_state(token_number)
+                        cumulative = state.get("transcript", "")
+                        checklist, _ = await extract_checklist(cumulative)
 
-                    await websocket.send_json({
-                        "type": "TRANSCRIPT_CHUNK",
-                        "text": text,
-                        "ui_toggles": checklist.model_dump() if checklist else {}
-                    })
+                        await websocket.send_json({
+                            "type": "TRANSCRIPT_CHUNK",
+                            "text": text,
+                            "ui_toggles": checklist.model_dump() if checklist else {}
+                        })
+                    except HTTPException as e:
+                        # Prevent HTTPException from bubbling to ASGI exception handler
+                        if websocket.client_state.name == "CONNECTED":
+                            await websocket.send_json({
+                                "type": "ERROR",
+                                "detail": str(e.detail)
+                            })
+                        break
 
             elif message.get("text"):
                 try:
@@ -199,10 +219,11 @@ async def finalize_encounter(token_number: int, data: Optional[Dict[str, Any]] =
     state = active_session.get_current_state(token_number)
     entry = get_queue_entry_by_token(token_number)
     
-    if not entry or not state["has_transcript"]:
+    cumulative_text = (data and data.get("text") and data["text"].strip()) or (state and state.get("transcript")) or (entry and entry.get("cumulative_transcript")) or ""
+    
+    if not entry or not cumulative_text.strip():
         raise HTTPException(status_code=400, detail="Cannot finalize without a transcript.")
         
-    cumulative_text = entry["cumulative_transcript"]
     care_context_id = entry["care_context_id"]
 
     
