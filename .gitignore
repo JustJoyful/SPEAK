@@ -15,6 +15,8 @@ htmlcov/
 # Databases & Local Storage
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 *.sqlite3
 
 # Environment Variables & Secrets
@@ -31,6 +33,9 @@ htmlcov/
 *.log
 *.tmp
 medsyncplan.md
+MEMORY.md
+AGENTS.md
+GEMINI.md
 
 # System / OS Files
 .DS_Store

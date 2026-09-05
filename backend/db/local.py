@@ -607,7 +607,9 @@ def get_encounter_by_care_context(care_context_id: str, db_path: Optional[str] =
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT bundle_id, care_context_id, payload, nonce, tag, record_hash, prev_hash, created_at FROM encounters WHERE care_context_id = ?",
+        "SELECT bundle_id, care_context_id, payload, nonce, tag, record_hash, prev_hash, created_at "
+        "FROM encounters WHERE care_context_id = ? "
+        "ORDER BY rowid DESC LIMIT 1",
         (care_context_id,)
     )
     row = cursor.fetchone()
