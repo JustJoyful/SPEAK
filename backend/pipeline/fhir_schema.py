@@ -111,22 +111,25 @@ class FHIRVitalSign(BaseModel):
 
 
 class FHIRCondition(BaseModel):
-    clinical_status: str = Field(default="active", description="active | recurrence | relapse | remission | resolved")
-    verification_status: str = Field(default="confirmed", description="unconfirmed | provisional | differential | confirmed")
+    clinical_status: Optional[str] = Field(default="active", description="active | recurrence | relapse | remission | resolved")
+    verification_status: Optional[str] = Field(default="confirmed", description="unconfirmed | provisional | differential | confirmed")
     code: FHIRCodeableConcept = Field(..., description="Diagnosis or symptom concept")
     notes: Optional[str] = Field(default=None, description="Clinical notes / observation")
 
 
 class FHIRMedicationDosage(BaseModel):
-    timing: str = Field(..., description="E.g., 1-0-1 (after food), TID, OD, SOS")
-    duration: str = Field(..., description="E.g., 5 days, 1 month")
-    route: str = Field(default="oral", description="oral | topical | intravenous | etc.")
+    timing: Optional[str] = Field(default="As directed", description="E.g., 1-0-1 (after food), TID, OD, SOS")
+    duration: Optional[str] = Field(default="As prescribed", description="E.g., 5 days, 1 month")
+    route: Optional[str] = Field(default="oral", description="oral | topical | intravenous | etc.")
     instructions: Optional[str] = Field(default=None, description="Additional intake instructions")
 
 
 class FHIRMedicationStatement(BaseModel):
     medication: FHIRCodeableConcept = Field(..., description="Drug brand name or generic compound")
-    dosage: FHIRMedicationDosage = Field(..., description="Dosage and frequency details")
+    dosage: Optional[FHIRMedicationDosage] = Field(
+        default_factory=lambda: FHIRMedicationDosage(),
+        description="Dosage and frequency details"
+    )
     reason: Optional[str] = Field(default=None, description="Indication for drug")
 
 
